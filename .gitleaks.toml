@@ -9,6 +9,7 @@ paths = [
   '''\.env\.example$''',
   '''k8s/secret\.example\.yaml$''',
   '''packages/contracts/.*test_snapshots.*''',
+  '''deployments/.*\.json$''',
 ]
 regexes = [
   '''REPLACE(_WITH_[A-Z_]+)?''',

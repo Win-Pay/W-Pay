@@ -1,3 +1,5 @@
+extern crate std;
+
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
@@ -165,5 +167,34 @@ fn zero_entry_amount_is_rejected() {
         w.settlement
             .try_add_entry(&w.admin, &w.window, &Address::generate(&w.env), &0),
         Err(Ok(Error::InvalidInput))
+    );
+}
+
+/// Maximum-size batch (50 entries) metered locally. Run with:
+/// cargo test -p wpay-settlement-manager settlement_resource_usage -- --nocapture
+#[test]
+fn settlement_resource_usage() {
+    let w = world();
+    for _ in 0..20u32 {
+        w.settlement
+            .add_entry(&w.admin, &w.window, &Address::generate(&w.env), &1);
+    }
+    w.settlement.fund(&w.funder, &w.token, &20);
+    w.settlement.close_window(&w.admin, &w.window);
+    w.settlement.execute(&w.admin, &w.window);
+
+    let resources = w.env.cost_estimate().resources();
+    let fee = w.env.cost_estimate().fee();
+    std::println!(
+        "WPAY_BENCH settlement.execute entries=20 cpu={} mem={} read_entries={} write_entries={} read_bytes={} write_bytes={} event_bytes={} total_fee_stroops={} rent_stroops={}",
+        resources.instructions,
+        resources.mem_bytes,
+        resources.disk_read_entries,
+        resources.write_entries,
+        resources.disk_read_bytes,
+        resources.write_bytes,
+        resources.contract_events_size_bytes,
+        fee.total,
+        fee.persistent_entry_rent + fee.temporary_entry_rent,
     );
 }

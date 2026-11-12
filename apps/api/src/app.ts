@@ -17,15 +17,19 @@ export async function createApp(options: { swagger?: boolean } = {}): Promise<IN
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.use(helmet());
-  app.enableCors({
-    origin: [
-      config.env.WEB_PUBLIC_URL,
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:3002",
-    ],
-    credentials: true,
-  });
+  const configuredOrigins = [
+    config.env.WEB_PUBLIC_URL,
+    ...(config.env.CORS_ORIGINS?.split(",") ?? []),
+  ]
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  // Localhost is a development convenience only; a production deployment must
+  // list every browser origin explicitly.
+  const developmentOrigins =
+    config.env.NODE_ENV === "production"
+      ? []
+      : ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"];
+  app.enableCors({ origin: [...new Set([...configuredOrigins, ...developmentOrigins])], credentials: true });
   app.setGlobalPrefix("v1");
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();

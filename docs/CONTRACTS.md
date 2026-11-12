@@ -78,7 +78,7 @@ payloads contain ids, amounts, status discriminants and addresses — no secrets
 
 ## Testing
 
-- `cargo test` runs 138 tests across 18 binaries, including nested-auth refund
+- `cargo test` runs 140 tests across 18 binaries (138 behaviour + 2 resource benchmarks), including nested-auth refund
   flows, cross-contract registry/fee lookups, paused-contract rejection, overflow
   handling, and invalid state transitions.
 - Snapshot tests record ledger/auth state for key scenarios under

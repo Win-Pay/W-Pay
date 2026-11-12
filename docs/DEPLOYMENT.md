@@ -12,7 +12,12 @@ performed**, and the production steps below have not been executed.
 - [ ] Postgres with PITR and a tested restore.
 - [ ] Secrets in a manager (not `.env`, not CI logs).
 - [ ] `ADMIN_ADDRESSES` and contract admin keys in hardware wallets or a
-      multisig; no admin key on an application server.
+      multisig; no admin key on an application server. See
+      [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md) for the 2-of-3 design and ceremony.
+- [ ] `CORS_ORIGINS` lists every browser origin (comma-separated). Production
+      does not add localhost automatically.
+- [ ] Synchronized clocks and a reachable `STELLAR_RPC_URL`; `/v1/health/ready`
+      probes it and returns `503` when it is down.
 - [ ] Domain, TLS certificate, and DNS for API + checkout.
 
 ## 1. Deploy contracts
@@ -67,6 +72,12 @@ not automatically reversible. Seed only the first time.
 `pnpm db:restore-drill <dump>` restores it into a scratch database and compares
 row counts. The daily workflow in `.github/workflows/backup.yml` does both.
 
+For an encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key) before
+running the backup; the script writes `<dump>.gpg`, removes the plaintext and
+prints the ciphertext hash. Upload only the `.gpg` file to storage in a
+different account/region; keep the private key offline. Managed Postgres PITR
+is still required for RPO in minutes.
+
 ## 3. Images
 
 ```bash
@@ -102,9 +113,25 @@ curl https://api.example.com/v1/health/ready
 curl https://api.example.com/v1/health/metrics | head
 ```
 
-Expected: `status: "ok"`, `database: "up"`, `soroban: "up"`, and
-`contracts` listing all 16 ids. If contracts are empty, stop: the deployment is
-incomplete and payment intents will return 503.
+Expected: `/v1/health` returns `database: "up"`, `soroban: "up"` (the API calls
+`getLatestLedger`; `not_configured` when no contracts are configured) and
+`contracts` listing all 16 ids. `/v1/health/ready` returns `200` with
+`ready: true` only when both Postgres and Soroban RPC answer; otherwise it
+returns `503`. If contracts are empty, stop: the deployment is incomplete and
+payment intents will return 503.
+
+Operator checks:
+
+```bash
+curl -H "Authorization: Bearer <admin-jwt>" https://api.example.com/v1/admin/indexer/status
+curl -H "Authorization: Bearer <admin-jwt>" https://api.example.com/v1/admin/indexer/failures
+```
+
+Indexer unresolved failures also appear in its `/health` (`degraded`) and
+`wpay_indexer_unresolved_failures`. Review a failure before resolving it; the
+resolve endpoint is audit-logged. Settlement batches are created with
+`POST /v1/settlements/batches` (1–20 entries, capped because a 50-entry execute
+exceeded the local Soroban budget) and advanced through link/intents/execute.
 
 Then exercise one real payment on testnet end to end, with a small amount, and
 confirm the indexer writes the settled payment. Only after that should mainnet

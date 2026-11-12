@@ -20,9 +20,12 @@
     "db:migrate": "pnpm --filter @wpay/database migrate",
     "db:seed": "pnpm --filter @wpay/database seed",
     "db:backup": "bash scripts/db-backup.sh",
-    "db:restore-drill": "bash scripts/db-restore-drill.sh"
+    "db:restore-drill": "bash scripts/db-restore-drill.sh",
+    "test:browser": "playwright test",
+    "measure:testnet": "NODE_PATH=apps/api/node_modules node scripts/measure-testnet-resources.cjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/node": "^22.10.2",
     "@vitest/coverage-v8": "2.1.9",
     "oxlint": "^0.15.5",

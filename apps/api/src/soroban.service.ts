@@ -57,6 +57,25 @@ export class SorobanService {
     return this.gateway.hasContract(name);
   }
 
+  /** Live RPC probe used by readiness checks; never throws. */
+  async rpcHealth(timeoutMs = 3_000): Promise<"up" | "down" | "not_configured"> {
+    if (!this.configured) return "not_configured";
+    try {
+      await Promise.race([
+        this.gateway.server.getLatestLedger(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("soroban rpc timeout")), timeoutMs),
+        ),
+      ]);
+      return "up";
+    } catch (error) {
+      this.logger.warn(
+        `soroban RPC health check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return "down";
+    }
+  }
+
   /** Signer for automated flows (settlement execution, keeper charges). */
   operatorSigner(): WalletSigner | null {
     if (!this.config.sorobanSourceSecret) return null;
@@ -237,6 +256,74 @@ export class SorobanService {
 
   unpauseAllIntent(admin: string): Promise<TransactionIntent | null> {
     return this.intent("emergencyPause", admin, calls.unpauseAll(admin), "Unpause all contracts");
+  }
+
+  openSettlementWindowIntent(input: {
+    operator: string;
+    token: string;
+    periodStart: number;
+    periodEnd: number;
+  }): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      input.operator,
+      calls.openSettlementWindow(input),
+      "Open settlement window",
+    );
+  }
+
+  addSettlementEntryIntent(input: {
+    operator: string;
+    windowId: bigint;
+    payee: string;
+    amount: bigint;
+  }): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      input.operator,
+      calls.addSettlementEntry(input),
+      "Add settlement entry",
+    );
+  }
+
+  closeSettlementWindowIntent(operator: string, windowId: bigint): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      operator,
+      calls.closeSettlementWindow(operator, windowId),
+      "Close settlement window",
+    );
+  }
+
+  executeSettlementWindowIntent(operator: string, windowId: bigint): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      operator,
+      calls.executeSettlementWindow(operator, windowId),
+      "Execute settlement window",
+    );
+  }
+
+  cancelSettlementWindowIntent(admin: string, windowId: bigint): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      admin,
+      calls.cancelSettlementWindow(admin, windowId),
+      "Cancel settlement window",
+    );
+  }
+
+  fundSettlementPoolIntent(input: {
+    from: string;
+    token: string;
+    amount: bigint;
+  }): Promise<TransactionIntent | null> {
+    return this.intent(
+      "settlementManager",
+      input.from,
+      calls.fundSettlementPool(input),
+      "Fund settlement pool",
+    );
   }
 
   withdrawIntent(input: {

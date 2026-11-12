@@ -115,6 +115,8 @@ export const ServerEnvSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   API_PUBLIC_URL: z.string().url().default("http://localhost:4000"),
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
+  /** Additional browser origins allowed by CORS, comma-separated. */
+  CORS_ORIGINS: z.string().optional(),
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(6),
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),

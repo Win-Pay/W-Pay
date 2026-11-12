@@ -92,6 +92,26 @@ and the `payment` contract event carries the same payer, merchant id, amount
 and fee. Re-running the script verifies the recorded payment instead of
 creating a second one.
 
+### Testnet resource measurement
+
+`pnpm measure:testnet` reads the record above, checks it over RPC/Horizon and
+simulates a fresh `create_payment` with the public payer account. It loads no
+secret and submits nothing. Measured 2026-11-12:
+
+| Metric | Value |
+| --- | --- |
+| Recorded fee charged | 82,589 stroops |
+| Recorded envelope / result / meta | 1,896 / 64 / 8,036 bytes |
+| Simulated CPU instructions | 2,419,372 |
+| Simulated disk read / write bytes | 372 / 1,532 |
+| Simulated minimum resource fee | 83,770 stroops |
+| Unsigned / assembled envelope | 308 / 1,840 bytes |
+| Assembled fee field | 83,870 stroops |
+
+The simulated fee differs from the recorded fee because the footprint and auth
+entries depend on current ledger state. These are Testnet measurements, not a
+mainnet price guarantee.
+
 ### API confirmation (real network, real database)
 
 The running API was pointed at the Testnet contracts and the payment was

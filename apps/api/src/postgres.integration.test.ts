@@ -13,7 +13,8 @@
  * left as it was found.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { randomBytes } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import type { PrismaClient } from "@wpay/database";
 
@@ -36,6 +37,8 @@ const created = {
   plans: [] as string[],
   apiKeys: [] as string[],
   webhooks: [] as string[],
+  windows: [] as string[],
+  failures: [] as string[],
 };
 
 /** Unique marker so parallel runs never collide on the unique email column. */
@@ -94,6 +97,8 @@ async function cleanup(prisma: PrismaClient): Promise<void> {
   await prisma.subscription.deleteMany({ where: { planId: { in: created.plans } } });
   await prisma.subscriptionPlan.deleteMany({ where: where(created.plans) });
   await prisma.apiKey.deleteMany({ where: where(created.apiKeys) });
+  await prisma.settlementWindow.deleteMany({ where: { id: { in: created.windows } } });
+  await prisma.indexerFailure.deleteMany({ where: where(created.failures) });
   await prisma.notification.deleteMany({ where: { merchantId: { in: created.merchants } } });
   await prisma.auditLog.deleteMany({ where: { actorId: { in: created.users } } });
   await prisma.merchant.deleteMany({ where: where(created.merchants) });
@@ -639,6 +644,222 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(response.status).toBe(200);
       expect(Array.isArray(response.body.items)).toBe(true);
     });
+
+    it("creates, links and rejects duplicate settlement batches", async () => {
+      const operator = address();
+      await harness.prisma.user.update({
+        where: { id: adminId },
+        data: { stellarAddress: operator },
+      });
+      const freshLogin = await json<{ accessToken: string }>(harness.baseUrl, "/auth/login", {
+        method: "POST",
+        body: { email: `admin.${run}@wpay.test`, password: "correct-horse-battery" },
+      });
+      expect(freshLogin.status).toBe(201);
+      const operatorToken = freshLogin.body.accessToken;
+      const token = StrKey.encodeContract(randomBytes(32));
+      const payee = address();
+      const periodStart = new Date(Date.now() - 3_600_000).toISOString();
+      const periodEnd = new Date(Date.now() - 1_800_000).toISOString();
+      const body = {
+        token,
+        periodStart,
+        periodEnd,
+        entries: [{ payee, amount: "1000" }],
+      };
+
+      const response = await json<{
+        window: { id: string; total: string; entries: unknown[]; windowIdOnChain: string | null };
+        intent: unknown;
+      }>(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token: operatorToken,
+        body,
+      });
+      expect(response.status).toBe(201);
+      expect(response.body.window.total).toBe("1000");
+      expect(response.body.window.entries).toHaveLength(1);
+      created.windows.push(response.body.window.id);
+
+      const duplicate = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token: operatorToken,
+        body,
+      });
+      expect(duplicate.status).toBe(409);
+
+      const onChainId = String(Date.now());
+      const linked = await json<{ windowIdOnChain: string }>(
+        harness.baseUrl,
+        `/settlements/${response.body.window.id}/link`,
+        { method: "POST", token: operatorToken, body: { windowId: onChainId } },
+      );
+      expect(linked.status).toBe(201);
+      expect(linked.body.windowIdOnChain).toBe(onChainId);
+
+      const detail = await json<{ id: string; entries: unknown[] }>(
+        harness.baseUrl,
+        `/settlements/${response.body.window.id}`,
+        { token: operatorToken },
+      );
+      expect(detail.status).toBe(200);
+      expect(detail.body.entries).toHaveLength(1);
+
+      const intents = await json<{ windowIdOnChain: string }>(
+        harness.baseUrl,
+        `/settlements/${response.body.window.id}/intents`,
+        { method: "POST", token: operatorToken },
+      );
+      expect(intents.status).toBe(201);
+      expect(intents.body.windowIdOnChain).toBe(onChainId);
+    });
+
+    it("rejects invalid settlement batches and unsafe transitions", async () => {
+      const operator = address();
+      await harness.prisma.user.update({
+        where: { id: adminId },
+        data: { stellarAddress: operator },
+      });
+      const login = await json<{ accessToken: string }>(harness.baseUrl, "/auth/login", {
+        method: "POST",
+        body: { email: `admin.${run}@wpay.test`, password: "correct-horse-battery" },
+      });
+      const token = login.body.accessToken;
+      const contract = StrKey.encodeContract(randomBytes(32));
+      const payee = address();
+      const base = {
+        token: contract,
+        periodStart: new Date(Date.now() - 7_200_000).toISOString(),
+        periodEnd: new Date(Date.now() - 3_600_000).toISOString(),
+        entries: [{ payee, amount: "500" }],
+      };
+
+      const empty = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, entries: [] },
+      });
+      expect(empty.status).toBe(400);
+
+      const badPeriod = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, periodEnd: base.periodStart },
+      });
+      expect(badPeriod.status).toBe(400);
+
+      const duplicatePayee = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, entries: [{ payee, amount: "500" }, { payee, amount: "600" }] },
+      });
+      expect(duplicatePayee.status).toBe(400);
+
+      const wrongPayee = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, entries: [{ payee, amount: "500", merchantId }] },
+      });
+      expect(wrongPayee.status).toBe(400);
+
+      const unknownMerchant = await json(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, entries: [{ payee, amount: "500", merchantId: "missing" }] },
+      });
+      expect(unknownMerchant.status).toBe(404);
+
+      const first = await json<{ window: { id: string } }>(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: { ...base, entries: [{ payee: settlement, amount: "500", merchantId }] },
+      });
+      expect(first.status).toBe(201);
+      created.windows.push(first.body.window.id);
+      const second = await json<{ window: { id: string } }>(harness.baseUrl, "/settlements/batches", {
+        method: "POST",
+        token,
+        body: {
+          ...base,
+          periodStart: new Date(Date.now() - 2_700_000).toISOString(),
+          periodEnd: new Date(Date.now() - 1_800_000).toISOString(),
+          entries: [{ payee: address(), amount: "250" }],
+        },
+      });
+      expect(second.status).toBe(201);
+      created.windows.push(second.body.window.id);
+
+      const missing = await json(harness.baseUrl, "/settlements/not-a-window", { token });
+      expect(missing.status).toBe(404);
+
+      const unlinked = await json<{ windowIdOnChain: string | null }>(
+        harness.baseUrl,
+        `/settlements/${first.body.window.id}/intents`,
+        { method: "POST", token },
+      );
+      expect(unlinked.status).toBe(201);
+      expect(unlinked.body.windowIdOnChain).toBeNull();
+
+      for (const path of [
+        `/settlements/${first.body.window.id}/execute-intent`,
+        `/settlements/${first.body.window.id}/cancel-intent`,
+      ]) {
+        const response = await json(harness.baseUrl, path, { method: "POST", token });
+        expect(response.status).toBe(409);
+      }
+
+      const windowId = String(Date.now());
+      const linked = await json(harness.baseUrl, `/settlements/${first.body.window.id}/link`, {
+        method: "POST",
+        token,
+        body: { windowId },
+      });
+      expect(linked.status).toBe(201);
+      const linkedAgain = await json(harness.baseUrl, `/settlements/${first.body.window.id}/link`, {
+        method: "POST",
+        token,
+        body: { windowId: "999999" },
+      });
+      expect(linkedAgain.status).toBe(409);
+      const reusedWindow = await json(harness.baseUrl, `/settlements/${second.body.window.id}/link`, {
+        method: "POST",
+        token,
+        body: { windowId },
+      });
+      expect(reusedWindow.status).toBe(409);
+
+      const earlyExecute = await json(harness.baseUrl, `/settlements/${first.body.window.id}/execute-intent`, {
+        method: "POST",
+        token,
+      });
+      expect(earlyExecute.status).toBe(409);
+
+      const cancelled = await json(harness.baseUrl, `/settlements/${first.body.window.id}/cancel-intent`, {
+        method: "POST",
+        token,
+      });
+      expect(cancelled.status).toBe(201);
+
+      await harness.prisma.settlementWindow.update({
+        where: { id: first.body.window.id },
+        data: { status: "CLOSED" },
+      });
+      const executed = await json(harness.baseUrl, `/settlements/${first.body.window.id}/execute-intent`, {
+        method: "POST",
+        token,
+      });
+      expect(executed.status).toBe(201);
+
+      await harness.prisma.settlementWindow.update({
+        where: { id: first.body.window.id },
+        data: { status: "EXECUTED" },
+      });
+      const cancelExecuted = await json(harness.baseUrl, `/settlements/${first.body.window.id}/cancel-intent`, {
+        method: "POST",
+        token,
+      });
+      expect(cancelExecuted.status).toBe(409);
+    });
   });
 
   describe("platform administration", () => {
@@ -674,6 +895,57 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
         token: adminToken,
       });
       expect(allowed.status).toBe(200);
+    });
+
+    it("exposes and resolves indexer failures to operators", async () => {
+      const contractId = StrKey.encodeContract(randomBytes(32));
+      const failure = await harness.prisma.indexerFailure.create({
+        data: {
+          contractId,
+          eventIndex: `${run}-1`,
+          txHash: "b".repeat(64),
+          ledger: 1,
+          kind: "payment",
+          reason: "projection could not match a unique local record",
+        },
+      });
+      created.failures.push(failure.id);
+
+      const forbidden = await json(harness.baseUrl, "/admin/indexer/failures", { token: userToken });
+      expect(forbidden.status).toBe(403);
+
+      const status = await json<{ unresolvedFailures: number; recent: { id: string }[] }>(
+        harness.baseUrl,
+        "/admin/indexer/status",
+        { token: adminToken },
+      );
+      expect(status.status).toBe(200);
+      expect(status.body.unresolvedFailures).toBeGreaterThanOrEqual(1);
+      expect(status.body.recent.some((row) => row.id === failure.id)).toBe(true);
+
+      const list = await json<{ items: { id: string }[] }>(
+        harness.baseUrl,
+        "/admin/indexer/failures?limit=5",
+        { token: adminToken },
+      );
+      expect(list.status).toBe(200);
+      expect(list.body.items.some((row) => row.id === failure.id)).toBe(true);
+
+      const resolved = await json<{ resolved: boolean }>(
+        harness.baseUrl,
+        `/admin/indexer/failures/${failure.id}/resolve`,
+        { method: "POST", token: adminToken },
+      );
+      expect(resolved.status).toBe(201);
+      expect(resolved.body.resolved).toBe(true);
+      const row = await harness.prisma.indexerFailure.findUnique({ where: { id: failure.id } });
+      expect(row?.resolvedAt).not.toBeNull();
+
+      const missing = await json(harness.baseUrl, "/admin/indexer/failures/missing/resolve", {
+        method: "POST",
+        token: adminToken,
+      });
+      expect(missing.status).toBe(404);
     });
 
     it("builds a treasury overview", async () => {

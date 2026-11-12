@@ -44,6 +44,30 @@ describe("contract call builders", () => {
     expect(call.args[2]?.b()).toBe(false);
   });
 
+  it("encodes settlement window and entry calls", () => {
+    const operator = Keypair.random().publicKey();
+    const token = Keypair.random().publicKey();
+    const payee = Keypair.random().publicKey();
+    const open = calls.openSettlementWindow({
+      operator,
+      token,
+      periodStart: 1_700_000_000,
+      periodEnd: 1_700_086_400,
+    });
+    expect(open.contract).toBe("settlementManager");
+    expect(open.method).toBe("open_window");
+    expect(open.args[2]?.switch().name).toBe("scvU64");
+
+    const entry = calls.addSettlementEntry({ operator, windowId: 4n, payee, amount: 1_000n });
+    expect(entry.method).toBe("add_entry");
+    expect(entry.args[1]?.switch().name).toBe("scvU64");
+    expect(entry.args[3]?.switch().name).toBe("scvI128");
+
+    expect(calls.closeSettlementWindow(operator, 4n).method).toBe("close_window");
+    expect(calls.executeSettlementWindow(operator, 4n).method).toBe("execute");
+    expect(calls.cancelSettlementWindow(operator, 4n).method).toBe("cancel");
+  });
+
   it("rejects a malformed bytes32", () => {
     expect(() => scv.bytes32("not-hex")).toThrow(/bytes32/);
   });

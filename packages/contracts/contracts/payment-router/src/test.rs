@@ -1,3 +1,5 @@
+extern crate std;
+
 use super::*;
 use fee_manager::FeeManagerClient as FeeSetupClient;
 use merchant_registry::MerchantRegistryClient;
@@ -245,4 +247,35 @@ fn uninitialized_dependencies_are_explicit_errors() {
     // than silently succeeding, which is the desired failure mode.
     let result = router.try_create_payment(&admin, &1, &admin, &100, &String::from_str(&env, ""));
     assert!(result.is_err());
+}
+
+/// Local host metering for the core money path. Run with:
+/// cargo test -p payment-router payment_resource_usage -- --nocapture
+/// These are modelled host resources, not network fees; see docs/TESTING.md.
+#[test]
+fn payment_resource_usage() {
+    let w = world();
+    let payment_id = w.router.create_payment(
+        &w.payer,
+        &w.merchant_id,
+        &w.token,
+        &10_000,
+        &string(&w.env, "resource-bench"),
+    );
+    assert_eq!(w.router.get_payment(&payment_id).amount, 10_000);
+
+    let resources = w.env.cost_estimate().resources();
+    let fee = w.env.cost_estimate().fee();
+    std::println!(
+        "WPAY_BENCH payment.create cpu={} mem={} read_entries={} write_entries={} read_bytes={} write_bytes={} event_bytes={} total_fee_stroops={} rent_stroops={}",
+        resources.instructions,
+        resources.mem_bytes,
+        resources.disk_read_entries,
+        resources.write_entries,
+        resources.disk_read_bytes,
+        resources.write_bytes,
+        resources.contract_events_size_bytes,
+        fee.total,
+        fee.persistent_entry_rent + fee.temporary_entry_rent,
+    );
 }

@@ -104,10 +104,16 @@ contract configuration behind a success.
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | GET | `/health` | public | Liveness + component status |
-| GET | `/health/ready` | public | Readiness (database probe) |
+| GET | `/health/ready` | public | Readiness: Postgres + Soroban RPC (`503` when either is down) |
 | GET | `/health/metrics` | public | Prometheus exposition |
 | GET | `/analytics/overview` | merchant | Volume, counts, fee totals |
 | GET | `/settlements` | merchant | Settlement history |
+| POST | `/settlements/batches` | merchant | Create a 1–20 entry settlement window |
+| GET | `/settlements/:id` | merchant | Batch, entries and linked contract id |
+| POST | `/settlements/:id/link` | merchant | Record the on-chain window id |
+| POST | `/settlements/:id/intents` | merchant | Open/add-entry/close XDR intents |
+| POST | `/settlements/:id/execute-intent` | merchant | Execute intent when `CLOSED` |
+| POST | `/settlements/:id/cancel-intent` | admin | Cancel a non-executed window |
 | GET | `/treasury/overview` | admin | Treasury balances and fees |
 | POST | `/treasury/withdraw-intent` | admin | Unsigned withdraw XDR |
 | GET/POST/DELETE | `/api-keys`, `/api-keys/:id` | merchant | Manage scoped keys |
@@ -116,6 +122,9 @@ contract configuration behind a success.
 | POST | `/admin/pause` | admin | Build pause transaction |
 | POST | `/admin/unpause` | admin | Build unpause transaction |
 | GET | `/admin/audit-logs` | admin | Audit trail |
+| GET | `/admin/indexer/status` | admin | Checkpoints and unresolved failures |
+| GET | `/admin/indexer/failures` | admin | Dead-letter rows |
+| POST | `/admin/indexer/failures/:id/resolve` | admin | Mark a reviewed failure resolved (audited) |
 | GET | `/admin/merchants` | admin | All merchants |
 | POST | `/transactions/submit` | public | Submit a signed XDR (signed by the caller) |
 

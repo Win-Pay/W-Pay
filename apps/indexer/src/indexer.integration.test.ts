@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
 import { PrismaClient } from "@wpay/database";
-import { applyProjection } from "./indexer";
+import { Indexer, applyProjection } from "./indexer";
 import type { Projection } from "./decode";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -23,6 +23,7 @@ const created = {
   plans: [] as string[],
   subscriptions: [] as string[],
   windows: [] as string[],
+  failures: [] as string[],
 };
 
 function address(): string {
@@ -61,6 +62,7 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     await prisma.subscription.deleteMany({ where: { id: { in: created.subscriptions } } });
     await prisma.subscriptionPlan.deleteMany({ where: { id: { in: created.plans } } });
     await prisma.settlementWindow.deleteMany({ where: { id: { in: created.windows } } });
+    await prisma.indexerFailure.deleteMany({ where: { id: { in: created.failures } } });
     await prisma.merchant.deleteMany({ where: { id: { in: created.merchants } } });
     await prisma.$disconnect();
   });
@@ -503,5 +505,111 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     expect(
       (await prisma.merchant.findUniqueOrThrow({ where: { id: m.id } })).settlementAddress,
     ).toBe(settlement);
+  });
+
+  it("retries a failed projection and resolves it once the record becomes linkable", async () => {
+    const m = await merchant(baseRegistry + 10n, "retry");
+    const payer = address();
+    const payment = await prisma.payment.create({
+      data: {
+        merchantId: m.id,
+        payerAddress: payer,
+        token: "native",
+        amount: 2500n,
+        fee: 62n,
+        net: 2438n,
+      },
+    });
+    created.payments.push(payment.id);
+
+    const failure = await prisma.indexerFailure.create({
+      data: {
+        contractId: "C_RETRY",
+        eventIndex: `${run}-retry`,
+        txHash: "e".repeat(64),
+        ledger: 700,
+        kind: "settle",
+        reason: "projection could not match a unique local record",
+        projection: {
+          type: "payment.settled",
+          contractPaymentId: `${baseRegistry + 10n}9`,
+          contractMerchantId: (baseRegistry + 10n).toString(),
+          payer,
+          amount: "2500",
+          fee: "62",
+          txHash: "e".repeat(64),
+          ledger: 700,
+        },
+      },
+    });
+    created.failures.push(failure.id);
+
+    const indexer = new Indexer(prisma, {
+      rpcUrl: "http://127.0.0.1:1",
+      contracts: {},
+      startLedger: 1,
+      batchSize: 10,
+    });
+    const result = await indexer.retryFailures();
+    expect(result.retried).toBeGreaterThanOrEqual(1);
+    expect(result.resolved).toBeGreaterThanOrEqual(1);
+
+    const settled = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(settled.status).toBe("SETTLED");
+    const row = await prisma.indexerFailure.findUniqueOrThrow({ where: { id: failure.id } });
+    expect(row.resolvedAt).not.toBeNull();
+    expect(row.attempts).toBeGreaterThan(1);
+  });
+
+  it("keeps an unmatched projection in the dead-letter queue with attempt history", async () => {
+    const m = await merchant(baseRegistry + 11n, "dead");
+    const payer = address();
+    const payment = await prisma.payment.create({
+      data: {
+        merchantId: m.id,
+        payerAddress: payer,
+        token: "native",
+        amount: 900n,
+        fee: 22n,
+        net: 878n,
+      },
+    });
+    created.payments.push(payment.id);
+
+    const failure = await prisma.indexerFailure.create({
+      data: {
+        contractId: "C_DEAD",
+        eventIndex: `${run}-dead`,
+        txHash: "f".repeat(64),
+        ledger: 701,
+        kind: "settle",
+        reason: "projection could not match a unique local record",
+        projection: {
+          type: "payment.settled",
+          contractPaymentId: `${baseRegistry + 11n}8`,
+          contractMerchantId: (baseRegistry + 11n).toString(),
+          payer,
+          amount: "9999",
+          fee: "22",
+          txHash: "f".repeat(64),
+          ledger: 701,
+        },
+      },
+    });
+    created.failures.push(failure.id);
+
+    const indexer = new Indexer(prisma, {
+      rpcUrl: "http://127.0.0.1:1",
+      contracts: {},
+      startLedger: 1,
+      batchSize: 10,
+    });
+    await indexer.retryFailures();
+
+    const row = await prisma.indexerFailure.findUniqueOrThrow({ where: { id: failure.id } });
+    expect(row.resolvedAt).toBeNull();
+    expect(row.attempts).toBeGreaterThan(1);
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(unchanged.status).toBe("PENDING");
   });
 });

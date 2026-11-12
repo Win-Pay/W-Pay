@@ -5,7 +5,6 @@ import {
   decodeEvent,
   eventPayload,
   planEvent,
-  type DecodedEvent,
   type Projection,
   type RawEvent,
 } from "./decode";
@@ -23,7 +22,14 @@ export interface IngestResult {
   inserted: number;
   skipped: number;
   applied: number;
+  failed: number;
   lastLedger: number;
+}
+
+export interface RetryResult {
+  retried: number;
+  resolved: number;
+  stillFailing: number;
 }
 
 export interface ReconcileResult {
@@ -56,12 +62,59 @@ export class Indexer {
   }
 
   async runOnce(): Promise<IngestResult[]> {
+    const retry = await this.retryFailures();
+    if (retry.retried > 0) {
+      this.log(
+        `retried=${retry.retried} resolved=${retry.resolved} still_failing=${retry.stillFailing}`,
+      );
+    }
     const results: IngestResult[] = [];
     for (const [name, contractId] of Object.entries(this.options.contracts)) {
       if (!contractId) continue;
       results.push(await this.ingestContract(name as ContractName, contractId));
     }
     return results;
+  }
+
+  /**
+   * Re-applies projections that previously could not be matched. This is safe
+   * because projections only mutate rows they can identify unambiguously; a
+   * second success is impossible once the row is linked.
+   */
+  async retryFailures(limit = 50): Promise<RetryResult> {
+    const rows = await this.prisma.indexerFailure.findMany({
+      where: { resolvedAt: null, projection: { not: Prisma.DbNull } },
+      orderBy: { createdAt: "asc" },
+      take: limit,
+    });
+    let resolved = 0;
+    for (const row of rows) {
+      const projection = row.projection as unknown as Projection;
+      try {
+        const applied = await this.prisma.$transaction((tx) => applyProjection(tx, projection));
+        if (applied) {
+          await this.prisma.indexerFailure.update({
+            where: { id: row.id },
+            data: { resolvedAt: new Date(), attempts: { increment: 1 }, reason: "resolved on retry" },
+          });
+          resolved += 1;
+        } else {
+          await this.prisma.indexerFailure.update({
+            where: { id: row.id },
+            data: { attempts: { increment: 1 } },
+          });
+        }
+      } catch (error) {
+        await this.prisma.indexerFailure.update({
+          where: { id: row.id },
+          data: {
+            attempts: { increment: 1 },
+            reason: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+    }
+    return { retried: rows.length, resolved, stillFailing: rows.length - resolved };
   }
 
   async ingestContract(name: ContractName, contractId: string): Promise<IngestResult> {
@@ -83,6 +136,7 @@ export class Indexer {
     let inserted = 0;
     let skipped = 0;
     let applied = 0;
+    let failed = 0;
     let lastLedger = checkpoint?.lastLedger ?? startLedger;
 
     for (let index = 0; index < events.length; index += 1) {
@@ -97,7 +151,16 @@ export class Indexer {
         pagingToken: event.id,
       };
       const decoded = decodeEvent(raw);
-      const projection = planEvent(name, decoded);
+      const malformed = decoded.kind === "unknown" || decoded.data === null;
+      let projection: Projection | null = null;
+      let planError: string | null = null;
+      if (!malformed) {
+        try {
+          projection = planEvent(name, decoded);
+        } catch (cause) {
+          planError = cause instanceof Error ? cause.message : String(cause);
+        }
+      }
 
       try {
         const didApply = await this.prisma.$transaction(async (tx) => {
@@ -111,10 +174,46 @@ export class Indexer {
               payload: eventPayload(decoded) as Prisma.InputJsonValue,
             },
           });
-          return projection ? await applyProjection(tx, projection) : false;
+          if (malformed || planError) {
+            await tx.indexerFailure.create({
+              data: {
+                contractId,
+                eventIndex,
+                txHash: event.txHash,
+                ledger: event.ledger,
+                kind: decoded.kind,
+                reason: malformed ? "event could not be decoded" : `projection planning failed: ${planError}`,
+              },
+            });
+            return false;
+          }
+          if (!projection) return false;
+          const didApply = await applyProjection(tx, projection);
+          if (!didApply) {
+            await tx.indexerFailure.create({
+              data: {
+                contractId,
+                eventIndex,
+                txHash: event.txHash,
+                ledger: event.ledger,
+                kind: decoded.kind,
+                reason: "projection could not match a unique local record",
+                projection: projection as unknown as Prisma.InputJsonValue,
+              },
+            });
+          }
+          return didApply;
         });
         inserted += 1;
-        if (didApply) applied += 1;
+        if (didApply) {
+          applied += 1;
+          await this.prisma.indexerFailure.updateMany({
+            where: { contractId, eventIndex, resolvedAt: null },
+            data: { resolvedAt: new Date(), reason: "resolved by later application" },
+          });
+        } else if (malformed || planError || projection) {
+          failed += 1;
+        }
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
           skipped += 1;
@@ -148,7 +247,7 @@ export class Indexer {
         `${contractId}: fetched=${events.length} inserted=${inserted} skipped=${skipped} applied=${applied}`,
       );
     }
-    return { fetched: events.length, inserted, skipped, applied, lastLedger };
+    return { fetched: events.length, inserted, skipped, applied, failed, lastLedger };
   }
 
   /** Compares indexed totals with the operational ledger for one merchant. */
@@ -502,6 +601,15 @@ export async function applyProjection(
       if (!projection.token || projection.periodStart === undefined || projection.periodEnd === undefined) {
         return false;
       }
+      const onChainId = BigInt(projection.windowIdOnChain);
+      const linked = await tx.settlementWindow.findUnique({ where: { windowIdOnChain: onChainId } });
+      if (linked) {
+        return (
+          linked.token === projection.token &&
+          linked.periodStart.getTime() === projection.periodStart * 1000 &&
+          linked.periodEnd.getTime() === projection.periodEnd * 1000
+        );
+      }
       const window = single(
         await tx.settlementWindow.findMany({
           where: {
@@ -518,7 +626,7 @@ export async function applyProjection(
       await tx.settlementWindow.update({
         where: { id: window.id },
         data: {
-          windowIdOnChain: BigInt(projection.windowIdOnChain),
+          windowIdOnChain: onChainId,
           txHash: projection.txHash,
         },
       });

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -18,7 +19,7 @@ import { z } from "zod";
 import type { TransactionIntent, UserRole } from "@wpay/types";
 import { clampPageSize } from "@wpay/config";
 import { encodeCursor } from "@wpay/shared";
-import { serializeBigInts } from "@wpay/database";
+import { Prisma, serializeBigInts } from "@wpay/database";
 import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
@@ -62,21 +63,30 @@ export class HealthController {
     for (const name of Object.keys(this.config.contracts)) {
       contracts[name] = true;
     }
+    const soroban = await this.soroban.rpcHealth();
     return {
-      status: database === "up" ? "ok" : "degraded",
+      status: database === "up" && soroban !== "down" ? "ok" : "degraded",
       uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
       version: "0.1.0",
       database,
-      soroban: this.soroban.configured ? "configured" : "not_configured",
+      soroban,
       contracts,
     };
   }
 
   @Public()
   @Get("ready")
-  async ready() {
-    await this.prisma.$queryRaw`SELECT 1`;
-    return { ready: true };
+  async ready(@Res({ passthrough: true }) response: Response) {
+    let database = true;
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+    } catch {
+      database = false;
+    }
+    const soroban = await this.soroban.rpcHealth();
+    const ready = database && soroban !== "down";
+    response.status(ready ? 200 : 503);
+    return { ready, database: database ? "up" : "down", soroban };
   }
 
   /** Minimal Prometheus exposition; the full stack scrapes this endpoint. */
@@ -215,6 +225,175 @@ export class PlatformService {
       items,
       nextCursor: rows.length > limit ? encodeCursor(items[items.length - 1]!.id) : null,
     };
+  }
+
+  async createSettlementBatch(
+    user: AuthUser,
+    input: {
+      token: string;
+      periodStart: string;
+      periodEnd: string;
+      entries: { payee: string; amount: string; merchantId?: string }[];
+    },
+  ) {
+    if (!user.stellarAddress) {
+      throw new BadRequestException("an operator wallet address is required to open a settlement window");
+    }
+    const periodStart = new Date(input.periodStart);
+    const periodEnd = new Date(input.periodEnd);
+    if (!(periodStart < periodEnd)) {
+      throw new BadRequestException("periodStart must be before periodEnd");
+    }
+    if (input.entries.length === 0 || input.entries.length > 20) {
+      throw new BadRequestException("a settlement batch needs between 1 and 20 entries");
+    }
+    const payees = new Set<string>();
+    let total = 0n;
+    const entries: { payee: string; amount: bigint; merchantId: string | null }[] = [];
+    for (const entry of input.entries) {
+      if (payees.has(entry.payee)) {
+        throw new BadRequestException(`duplicate payee ${entry.payee} in settlement batch`);
+      }
+      payees.add(entry.payee);
+      const amount = BigInt(entry.amount);
+      if (amount <= 0n) throw new BadRequestException("settlement amounts must be positive");
+      if (entry.merchantId) {
+        const merchant = await this.prisma.merchant.findUnique({ where: { id: entry.merchantId } });
+        if (!merchant) throw new NotFoundException("merchant not found");
+        if (merchant.settlementAddress !== entry.payee) {
+          throw new BadRequestException("entry payee must match the merchant settlement address");
+        }
+      }
+      total += amount;
+      entries.push({ payee: entry.payee, amount, merchantId: entry.merchantId ?? null });
+    }
+
+    let window;
+    try {
+      window = await this.prisma.settlementWindow.create({
+        data: {
+          token: input.token,
+          periodStart,
+          periodEnd,
+          total,
+          entries: { create: entries },
+        },
+        include: { entries: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new ConflictException("a settlement batch already exists for this token and period");
+      }
+      throw error;
+    }
+
+    const intent = await this.soroban.openSettlementWindowIntent({
+      operator: user.stellarAddress,
+      token: input.token,
+      periodStart: Math.floor(periodStart.getTime() / 1000),
+      periodEnd: Math.floor(periodEnd.getTime() / 1000),
+    });
+    await this.audit.record(user, "settlement.batch.create", "SettlementWindow", window.id, {
+      token: input.token,
+      total: total.toString(),
+      entries: entries.length,
+    });
+    return { window: settlementWindowRecord(window), intent };
+  }
+
+  async getSettlementBatch(id: string) {
+    const row = await this.prisma.settlementWindow.findUnique({
+      where: { id },
+      include: { entries: true },
+    });
+    if (!row) throw new NotFoundException("settlement batch not found");
+    return settlementWindowRecord(row);
+  }
+
+  /** Links an on-chain window id before the indexer observes the open event. */
+  async linkSettlementWindow(user: AuthUser, id: string, windowId: string) {
+    const row = await this.prisma.settlementWindow.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("settlement batch not found");
+    if (row.windowIdOnChain !== null) {
+      throw new ConflictException("settlement batch is already linked on chain");
+    }
+    const onChain = BigInt(windowId);
+    const clash = await this.prisma.settlementWindow.findUnique({ where: { windowIdOnChain: onChain } });
+    if (clash) throw new ConflictException("that on-chain window is already linked");
+    const updated = await this.prisma.settlementWindow.update({
+      where: { id },
+      data: { windowIdOnChain: onChain },
+      include: { entries: true },
+    });
+    await this.audit.record(user, "settlement.batch.link", "SettlementWindow", id, { windowId });
+    return settlementWindowRecord(updated);
+  }
+
+  async settlementBatchIntents(user: AuthUser, id: string) {
+    if (!user.stellarAddress) throw new BadRequestException("operator wallet address is required");
+    const row = await this.prisma.settlementWindow.findUnique({
+      where: { id },
+      include: { entries: true },
+    });
+    if (!row) throw new NotFoundException("settlement batch not found");
+    if (row.status !== "OPEN") throw new ConflictException("settlement batch is not open");
+    if (row.windowIdOnChain === null) {
+      const intent = await this.soroban.openSettlementWindowIntent({
+        operator: user.stellarAddress,
+        token: row.token,
+        periodStart: Math.floor(row.periodStart.getTime() / 1000),
+        periodEnd: Math.floor(row.periodEnd.getTime() / 1000),
+      });
+      return { windowIdOnChain: null, intents: intent ? [intent] : [] };
+    }
+    const intents: TransactionIntent[] = [];
+    for (const entry of row.entries.sort((a, b) => a.payee.localeCompare(b.payee))) {
+      const intent = await this.soroban.addSettlementEntryIntent({
+        operator: user.stellarAddress,
+        windowId: row.windowIdOnChain,
+        payee: entry.payee,
+        amount: entry.amount,
+      });
+      if (intent) intents.push(intent);
+    }
+    const close = await this.soroban.closeSettlementWindowIntent(
+      user.stellarAddress,
+      row.windowIdOnChain,
+    );
+    if (close) intents.push(close);
+    return { windowIdOnChain: row.windowIdOnChain.toString(), intents };
+  }
+
+  async executeSettlementIntent(user: AuthUser, id: string) {
+    if (!user.stellarAddress) throw new BadRequestException("operator wallet address is required");
+    const row = await this.prisma.settlementWindow.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("settlement batch not found");
+    if (row.windowIdOnChain === null) throw new ConflictException("settlement batch is not linked");
+    if (row.status !== "CLOSED") throw new ConflictException("settlement batch is not closed");
+    const intent = await this.soroban.executeSettlementWindowIntent(
+      user.stellarAddress,
+      row.windowIdOnChain,
+    );
+    await this.audit.record(user, "settlement.batch.execute", "SettlementWindow", id, {
+      windowId: row.windowIdOnChain.toString(),
+    });
+    return { intent };
+  }
+
+  async cancelSettlementIntent(user: AuthUser, id: string) {
+    if (!user.stellarAddress) throw new BadRequestException("admin wallet address is required");
+    const row = await this.prisma.settlementWindow.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("settlement batch not found");
+    if (row.windowIdOnChain === null) throw new ConflictException("settlement batch is not linked");
+    if (row.status === "EXECUTED") throw new ConflictException("executed batches cannot be cancelled");
+    const intent = await this.soroban.cancelSettlementWindowIntent(
+      user.stellarAddress,
+      row.windowIdOnChain,
+    );
+    await this.audit.record(user, "settlement.batch.cancel", "SettlementWindow", id, {
+      windowId: row.windowIdOnChain.toString(),
+    });
+    return { intent };
   }
 
   async treasuryOverview(user: AuthUser, merchantId?: string) {
@@ -385,6 +564,56 @@ export class TreasuryController {
   }
 }
 
+function settlementWindowRecord(row: {
+  id: string;
+  token: string;
+  periodStart: Date;
+  periodEnd: Date;
+  status: string;
+  total: bigint;
+  windowIdOnChain: bigint | null;
+  txHash: string | null;
+  createdAt: Date;
+  executedAt: Date | null;
+  entries: { payee: string; amount: bigint; merchantId: string | null }[];
+}) {
+  return {
+    id: row.id,
+    token: row.token,
+    periodStart: row.periodStart.toISOString(),
+    periodEnd: row.periodEnd.toISOString(),
+    status: row.status,
+    total: row.total.toString(),
+    windowIdOnChain: row.windowIdOnChain?.toString() ?? null,
+    txHash: row.txHash,
+    createdAt: row.createdAt.toISOString(),
+    executedAt: row.executedAt?.toISOString() ?? null,
+    entries: row.entries.map((entry) => ({
+      payee: entry.payee,
+      amount: entry.amount.toString(),
+      merchantId: entry.merchantId,
+    })),
+  };
+}
+
+const SettlementBatchSchema = z.object({
+  token: z.string().regex(/^C[A-Z2-7]{55}$/),
+  periodStart: z.string().datetime(),
+  periodEnd: z.string().datetime(),
+  entries: z
+    .array(
+      z.object({
+        payee: z.string().regex(/^G[A-Z2-7]{55}$/),
+        amount: z.string().regex(/^[1-9][0-9]*$/),
+        merchantId: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .max(20),
+});
+
+const SettlementLinkSchema = z.object({ windowId: z.string().regex(/^[1-9][0-9]*$/) });
+
 @ApiTags("settlements")
 @Controller("settlements")
 export class SettlementsController {
@@ -400,6 +629,47 @@ export class SettlementsController {
       limit: query.limit ? Number(query.limit) : undefined,
       cursor: query.cursor,
     });
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Post("batches")
+  createBatch(@CurrentUser() user: AuthUser, @Body(new ZodPipe(SettlementBatchSchema)) body: z.infer<typeof SettlementBatchSchema>) {
+    return this.platform.createSettlementBatch(user, body);
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Get(":id")
+  get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    void user;
+    return this.platform.getSettlementBatch(id);
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Post(":id/link")
+  link(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodPipe(SettlementLinkSchema)) body: { windowId: string },
+  ) {
+    return this.platform.linkSettlementWindow(user, id, body.windowId);
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Post(":id/intents")
+  intents(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.platform.settlementBatchIntents(user, id);
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Post(":id/execute-intent")
+  executeIntent(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.platform.executeSettlementIntent(user, id);
+  }
+
+  @Roles("ADMIN")
+  @Post(":id/cancel-intent")
+  cancelIntent(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.platform.cancelSettlementIntent(user, id);
   }
 }
 
@@ -480,6 +750,79 @@ export class AdminController {
       action: query.action,
       entity: query.entity,
     });
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Get("indexer/status")
+  async indexerStatus() {
+    const [checkpoints, unresolved, recent] = await Promise.all([
+      this.prisma.indexerCheckpoint.findMany({ orderBy: { contractId: "asc" } }),
+      this.prisma.indexerFailure.count({ where: { resolvedAt: null } }),
+      this.prisma.indexerFailure.findMany({
+        where: { resolvedAt: null },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      }),
+    ]);
+    return {
+      unresolvedFailures: unresolved,
+      checkpoints: checkpoints.map((row) => ({
+        contractId: row.contractId,
+        lastLedger: row.lastLedger,
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      recent: recent.map((row) => ({
+        id: row.id,
+        contractId: row.contractId,
+        txHash: row.txHash,
+        ledger: row.ledger,
+        kind: row.kind,
+        reason: row.reason,
+        attempts: row.attempts,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Get("indexer/failures")
+  async indexerFailures(@Query("limit") limit?: string) {
+    const take = Math.min(Math.max(Number(limit ?? 50), 1), 200);
+    const rows = await this.prisma.indexerFailure.findMany({
+      where: { resolvedAt: null },
+      orderBy: { createdAt: "desc" },
+      take,
+    });
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        contractId: row.contractId,
+        eventIndex: row.eventIndex,
+        txHash: row.txHash,
+        ledger: row.ledger,
+        kind: row.kind,
+        reason: row.reason,
+        attempts: row.attempts,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      nextCursor: null,
+    };
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Post("indexer/failures/:id/resolve")
+  async resolveIndexerFailure(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const row = await this.prisma.indexerFailure.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("indexer failure not found");
+    await this.prisma.indexerFailure.update({
+      where: { id },
+      data: { resolvedAt: new Date(), reason: "manually resolved by operator" },
+    });
+    await this.audit.record(user, "indexer.failure.resolve", "IndexerFailure", id, {
+      contractId: row.contractId,
+      txHash: row.txHash,
+    });
+    return { resolved: true };
   }
 
   @Roles("OPERATOR" as UserRole)

@@ -7,6 +7,12 @@
 # Usage:
 #   DATABASE_URL=postgresql://... scripts/db-backup.sh [output.dump]
 #   POSTGRES_PASSWORD=wpay_local_only scripts/db-backup.sh   # docker fallback
+#
+# Encryption (recommended for off-site copies):
+#   BACKUP_GPG_RECIPIENT=ops@example.com scripts/db-backup.sh
+# writes <output>.gpg and removes the plaintext dump. Encrypting here means the
+# plaintext never reaches the off-site location. Test restoration with
+# scripts/db-restore-drill.sh <file>.gpg (it decrypts with the local secret key).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,5 +42,18 @@ if [ ! -s "$OUT" ]; then
   exit 1
 fi
 
-echo "backup written: $OUT"
+if [ -n "${BACKUP_GPG_RECIPIENT:-}" ]; then
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "error: BACKUP_GPG_RECIPIENT is set but gpg is not installed" >&2
+    exit 1
+  fi
+  gpg --batch --yes --trust-model always --recipient "$BACKUP_GPG_RECIPIENT" \
+    --output "$OUT.gpg" --encrypt "$OUT"
+  rm -f "$OUT"
+  OUT="$OUT.gpg"
+  echo "backup encrypted: $OUT"
+else
+  echo "backup written: $OUT"
+  echo "warning: dump is unencrypted; set BACKUP_GPG_RECIPIENT for off-site copies" >&2
+fi
 sha256sum "$OUT"

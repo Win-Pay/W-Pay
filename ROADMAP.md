@@ -16,8 +16,9 @@ Status legend: done / partial / not started. Nothing here is a promise of a date
 - [x] Testnet deployment with published, verified contract ids and transactions
 - [x] End-to-end Testnet payment verified on-chain and through the API
 - [x] k6 load test wired into CI with latency and error thresholds
-- [x] Automated PostgreSQL backup workflow and executable restore drill
-- [ ] Playwright browser E2E for checkout and dashboards
+- [x] Automated PostgreSQL backup workflow, executable restore drill, encrypted off-site copy support and measured local restore
+- [x] Playwright checkout tests with a mocked wallet and mocked API (real-extension E2E remains open)
+- [ ] Playwright browser E2E for merchant/admin dashboards
 
 ## Next — before mainnet
 
@@ -25,7 +26,7 @@ Status legend: done / partial / not started. Nothing here is a promise of a date
 - [ ] Mainnet deployment after audit; replace the throwaway Testnet deployer key
 - [ ] Multisig/timelock for admin roles; documented key ceremony
 - [ ] Fuzz/invariant testing for fee math, refunds and escrow transitions
-- [ ] Settlement worker with idempotent batch execution and reconciliation report
+- [ ] Settlement worker with idempotent automatic batch execution and reconciliation report (operator-driven batch API and intents exist; automatic payout is deliberately not enabled)
 - [ ] Code-splitting for the mobile bundle
 - [ ] Hosted API, indexer and Postgres with dashboards pointing at them
 - [ ] Incident drill with recorded timings (backup restore is automated)

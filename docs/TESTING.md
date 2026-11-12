@@ -6,10 +6,19 @@
 pnpm contracts:test
 ```
 
-138 tests across 18 test binaries run on the Soroban test host. They cover
-access control, pause behaviour, state transitions, fee math, overflow, nested
-auth, and cross-contract calls. Snapshot files under `test_snapshots/` record
-ledger/auth intersections for key scenarios.
+140 tests across 18 test binaries run on the Soroban test host: 138 behaviour
+tests plus two `WPAY_BENCH` resource tests (payment creation and a 20-entry
+settlement execution). They cover access control, pause behaviour, state
+transitions, fee math, overflow, nested auth, and cross-contract calls.
+Snapshot files under `test_snapshots/` record ledger/auth intersections for key
+scenarios.
+
+Run the benchmarks and show their output with:
+
+```bash
+cargo test --manifest-path packages/contracts/Cargo.toml -- --nocapture \
+  payment_resource_usage settlement_resource_usage
+```
 
 Known pitfall: `mock_all_auths()` does not satisfy nested auth when a
 non-root contract authorizes the outer call. Refund tests therefore authorize
@@ -24,13 +33,13 @@ same `cargo test` invocation.
 pnpm test
 ```
 
-188 tests pass and 2 are skipped, across six packages:
+194 tests pass and 2 are skipped, across six packages:
 
 | Package | Tests | Focus |
 | --- | --- | --- |
-| `@wpay/api` | 130 | Access rules, API keys, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ, URL guard, plus real-Postgres integration flows for payments, refunds, subscriptions, webhooks and blockchain confirmation |
-| `@wpay/indexer` | 23 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints |
-| `@wpay/sdk` | 11 | HTTP client, call builders, Soroban gateway, wallet signers |
+| `@wpay/api` | 133 | Access rules, API keys, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ, URL guard, settlement batches, plus real-Postgres integration flows for payments, refunds, subscriptions, webhooks and blockchain confirmation |
+| `@wpay/indexer` | 25 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, dead-letter retry/recovery |
+| `@wpay/sdk` | 12 | HTTP client, call builders (including settlement windows), Soroban gateway, wallet signers |
 | `@wpay/shared` | 10 | Cursor encoding, webhook HMAC/verification, wallet messages, error mapping |
 | `@wpay/e2e` | 10 (+2 skipped) | Env-name mapping vs `.env.example`, fee/amount parity, call construction, wallet message, webhook tamper tests; live-API tests skip unless `WPAY_E2E_API_URL` is set |
 | `@wpay/database` | 4 | Cursor paging, bigint serialization, migration helpers |
@@ -45,10 +54,71 @@ rollbacks; when Postgres is unavailable the files skip rather than fail.
 DATABASE_URL=... JWT_SECRET=... pnpm --filter @wpay/api test:coverage
 ```
 
-Measured 2026-11-12: **89.23% statements**, 69.77% branches, 92.24% functions.
+Measured 2026-11-12: **89.45% statements**, 70.22% branches, 92.54% functions.
 Payment module 90%, invoices 91.48%, operations (refunds/subscriptions) 91.27%,
-auth 94.57%. The 80% overall / 90% money-path targets are enforced by review,
+platform settlements 92.93%, auth 94.57%. The 80% overall / 90% money-path targets are enforced by review,
 not by a coverage threshold in CI.
+
+### Playwright browser flow
+
+```bash
+pnpm exec playwright install --with-deps chromium
+pnpm test:browser
+```
+
+Three Chromium tests drive the checkout page with a mocked Freighter provider
+and mocked API routes: a missing wallet is reported instead of paying, a normal
+connect/sign/submit sequence submits exactly one transaction and shows the
+confirmed hash, and a `FAILED` submission surfaces an error without marking the
+invoice paid. Measured 2026-11-12: 3 passed (21 s). The CI `browser` job runs the
+same suite. These tests exercise the UI and wallet adapter contract; they do not
+load the real Freighter extension or submit to Testnet.
+
+## Soroban resource measurements
+
+Local metering uses the test host's cost estimate, so the numbers are
+reproducible without network access:
+
+```bash
+cargo test --manifest-path packages/contracts/Cargo.toml -- --nocapture \
+  payment_resource_usage settlement_resource_usage
+```
+
+Measured 2026-11-12:
+
+| Operation | CPU instructions | Memory bytes | Read entries / bytes | Write entries / bytes | Event bytes | Resource fee (stroops) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `payment.create` | 38,015 | 7,538 | 0 / 0 | 0 / 0 | 0 | 27 |
+| `settlement.execute` (20 entries) | 4,200,606 | 753,222 | 1 / 92 | 24 / 7,420 | 4,872 | 24,780,075 (incl. 24,647,887 rent) |
+
+The test-host fee is a local estimate; it is not the network charge. Note the
+rent component of the 20-entry settlement: a 50-entry batch exceeded the test
+host's budget in `auth.rs`, which is why the API caps batches at 20 entries.
+
+Real Testnet numbers, including transaction size and network simulation:
+
+```bash
+pnpm measure:testnet
+```
+
+The script reads `deployments/testnet.json` and `deployments/testnet-e2e.json`,
+verifies the recorded payment over RPC/Horizon, then simulates a fresh
+`create_payment` with the public payer account. It loads no secret, signs
+nothing and submits nothing. Measured 2026-11-12:
+
+| Measurement | Value |
+| --- | --- |
+| Recorded payment fee charged | 82,589 stroops |
+| Recorded payment envelope / result / meta | 1,896 / 64 / 8,036 bytes |
+| Simulated `create_payment` CPU | 2,419,372 instructions |
+| Simulated disk read / write | 372 / 1,532 bytes |
+| Simulated minimum resource fee | 83,770 stroops |
+| Unsigned / assembled envelope | 308 / 1,840 bytes |
+| Assembled transaction fee field | 83,870 stroops |
+
+The fee difference between the recorded transaction and the simulation reflects
+different ledger state (footprint and auth entries), not a fixed price. Re-run
+the script to refresh the values.
 
 ## Testnet end-to-end
 
@@ -91,10 +161,15 @@ POSTGRES_PASSWORD=... pnpm db:restore-drill
 ```
 
 `scripts/db-restore-drill.sh` creates a scratch database, restores the dump,
-compares row counts for the core tables and always drops the scratch database.
-It passes locally against the compose Postgres. `.github/workflows/backup.yml`
-runs a daily production dump, restores it into an ephemeral Postgres and
-compares every row count with the manifest captured at dump time.
+compares row counts for the core and new tables (including indexer failures and
+settlement batches) and always drops the scratch database. It passes locally
+against the compose Postgres in about 1 second for the seeded fixture.
+`.github/workflows/backup.yml` runs a daily production dump, restores it into an
+ephemeral Postgres and compares every row count with the manifest captured at
+dump time. Set `BACKUP_GPG_RECIPIENT` to encrypt an off-site copy
+(`scripts/db-backup.sh` writes `<dump>.gpg` and deletes the plaintext); the
+drill decrypts `.gpg` dumps with the matching secret key. Encrypted round-trip
+verified locally 2026-11-12.
 
 ## Build and type checks
 
@@ -143,7 +218,12 @@ keyless OIDC, then verifies signatures before Helm upgrade.
 ## What is not tested
 
 - Mainnet execution, real funds, or any external audit.
-- Wallet extension interaction (Freighter) — the adapter and signing helpers are
-  unit tested, but no browser drives the extension.
-- Browser E2E (no Playwright suite).
-- Long-running incident drills and chaos scenarios; backup/restore is automated.
+- The real Freighter extension in a browser. The Playwright suite mocks the
+  provider; the adapter and signing helpers are unit tested.
+- Real-wallet Testnet submission from the browser (the API-side Testnet E2E is
+  recorded in `deployments/testnet-e2e.json`).
+- Long-running incident drills and chaos scenarios; backup/restore and encrypted
+  backup round-trips are automated, but failover RTO/RPO is not measured.
+- A green GitHub Actions run. Remote runs were inspected and their setup failures
+  were fixed (lockfile/env tracking, Gitleaks license, Trivy tag); re-running
+  requires pushing the fix.

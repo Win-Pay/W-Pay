@@ -133,6 +133,7 @@ model Merchant {
   webhooks          WebhookEndpoint[]
   apiKeys           ApiKey[]
   settlementWindows SettlementWindow[]
+  settlementEntries SettlementEntry[]
   notifications     Notification[]
 
   @@index([status])
@@ -284,8 +285,25 @@ model SettlementWindow {
   executedAt      DateTime?
 
   merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  entries  SettlementEntry[]
 
+  @@unique([token, periodStart, periodEnd])
   @@index([status, createdAt])
+}
+
+model SettlementEntry {
+  id                 String   @id @default(cuid())
+  settlementWindowId String
+  merchantId         String?
+  payee              String
+  amount             BigInt
+  createdAt          DateTime @default(now())
+
+  settlementWindow SettlementWindow @relation(fields: [settlementWindowId], references: [id], onDelete: Cascade)
+  merchant         Merchant?        @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@unique([settlementWindowId, payee])
+  @@index([merchantId])
 }
 
 model WebhookEndpoint {
@@ -400,4 +418,23 @@ model IdempotencyKey {
 
   @@unique([scope, key])
   @@index([expiresAt])
+}
+
+model IndexerFailure {
+  id         String    @id @default(cuid())
+  contractId String
+  eventIndex String
+  txHash     String
+  ledger     Int
+  kind       String
+  reason     String
+  projection Json?
+  attempts   Int       @default(1)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([contractId, eventIndex])
+  @@index([resolvedAt, createdAt])
+  @@index([txHash])
 }

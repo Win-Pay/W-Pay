@@ -13,11 +13,13 @@ an independent security audit and must not be described as one.
 
 ## Method
 
-Manual review of entry points and state transitions, `cargo test` (138 tests),
-TypeScript tests (188 passed, 2 skipped), build/typecheck of every package,
-Prisma schema validation, API coverage (89.23% statements), a real Testnet
-deployment and payment, `cargo audit`, and static checks configured in CI
-(CodeQL, Trivy, gitleaks, dependency review). Locally executed: Gitleaks (no leaks), `pnpm
+Manual review of entry points and state transitions, `cargo test` (140 tests,
+including two resource benchmarks), TypeScript tests (194 passed, 2 skipped),
+three Playwright checkout tests with a mocked wallet, build/typecheck of every
+package, Prisma schema validation, API coverage (89.45% statements), a real
+Testnet deployment and payment, a Testnet RPC/Horizon resource measurement,
+`cargo audit`, and static checks configured in CI (CodeQL, Trivy, gitleaks,
+dependency review). Locally executed: Gitleaks (no leaks), `pnpm
 audit --prod` (no known production advisories), Helm lint/template, kubeconform,
 Prometheus/Alertmanager config checks, and Docker image build. No fuzzing,
 formal verification, external penetration test, or mainnet test was performed.
@@ -35,7 +37,9 @@ formal verification, external penetration test, or mainnet test was performed.
 2. **Admin keys are centralized.** A single admin key can change fees up to the
    cap, pause, and propose upgrades. Use multisig/hardware wallets and a
    timelock; the upgrade manager's delay must be configured explicitly. The
-   Testnet deployer is a throwaway single key and must not be reused.
+   Testnet deployer is a throwaway single key and must not be reused. A concrete
+   2-of-3 account design and ceremony checklist are in
+   [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md); none of it has been executed.
 3. **Unaudited contracts handling funds.** No independent audit exists. Do not
    deploy to mainnet with real value without one.
 
@@ -57,26 +61,32 @@ formal verification, external penetration test, or mainnet test was performed.
    but this remains a residual risk.
 8. **Broad extension host permission (`https://*/*`).** Narrow to your API host
    in production builds.
-9. **Browser wallet flow untested.** Freighter connect/sign/submit code paths
-   exist in checkout and admin/merchant dashboards, but there is no Playwright
-   suite or real-extension test in CI.
+9. **Real browser wallet flow untested.** The checkout now has three Playwright
+   tests with a mocked Freighter provider and mocked API, covering missing
+   wallet, single submission and failed submission. The real extension, user
+   rejection and real Testnet signing are still not exercised by CI.
+10. **Settlement execution is budget-bounded.** A 50-entry
+    `settlement.execute` exceeded the local Soroban test-host budget in
+    `auth.rs`; the API caps batches at 20 entries. The 20-entry benchmark uses
+    ~4.2M CPU instructions and carries a large rent component. Re-check the cap
+    against current network limits before raising it.
 
 ### Low / informational
 
-10. **Container hardening untested at runtime.** The images build and the API
+11. **Container hardening untested at runtime.** The images build and the API
     container passes a health smoke test as the non-root `node` user;
     read-only root filesystems are set in Kubernetes but not exercised here.
     Next.js may need a writable `.next/cache`.
-11. **`SOROBAN_SOURCE_SECRET` in process env.** Prefer a signer service or HSM for
+12. **`SOROBAN_SOURCE_SECRET` in process env.** Prefer a signer service or HSM for
     any automated flow.
-12. **Metrics and health are public.** They expose component status and counts;
+13. **Metrics and health are public.** They expose component status and counts;
     ensure no sensitive numbers are added.
-13. **Deployment files use placeholder hosts** (`example`, `wpay.example`); they
+14. **Deployment files use placeholder hosts** (`example`, `wpay.example`); they
     are templates and will not route real traffic.
-14. **Mobile bundle is large** (~1.27 MB, Stellar SDK). Code-splitting would help;
+15. **Mobile bundle is large** (~1.27 MB, Stellar SDK). Code-splitting would help;
     not a security issue.
-15. **No E2E browser tests**, so UI regressions are not caught by CI.
-16. **Rust advisory (transitive).** `cargo audit` reports RUSTSEC-2026-0387
+16. **Dashboard browser coverage is missing.** The Playwright suite covers checkout only; admin and merchant dashboard flows are not browser-tested.
+17. **Rust advisory (transitive).** `cargo audit` reports RUSTSEC-2026-0387
     (timing variability in `crypto-bigint` 0.5.5), reached through
     `soroban-env-host` 29.0.1 → `elliptic-curve` 0.13. The patched 0.7.x line is
     not compatible with the current SDK, so CI pins an explicit ignore and the
@@ -97,6 +107,17 @@ formal verification, external penetration test, or mainnet test was performed.
   and the invoice stayed `OPEN`.
 - No secrets are committed; `.env.example` contains placeholders only and
   Gitleaks found no leaks in the tracked history.
+- Production CORS uses only `WEB_PUBLIC_URL` plus explicit `CORS_ORIGINS`;
+  localhost is added only outside production.
+- `/v1/health/ready` returns `503` unless Postgres and the Soroban RPC both
+  answer; storage/Redis dependency failures propagate instead of being reported
+  as ready.
+- Indexer projection failures are durable (`IndexerFailure`), retried, surfaced
+  in health/metrics/admin endpoints and never silently dropped. Encrypted
+  database backups and their restore path were verified locally.
+- Settlement batches are operator-created, require unique payees, reject
+  duplicate windows, verify a linked on-chain window's token/period, and cannot
+  be cancelled after execution.
 - `prisma validate` passes and the baseline migration matches the schema.
 - `pnpm audit --prod --audit-level=high` reports no known production
   vulnerabilities after the zod 4 upgrade and transitive overrides.

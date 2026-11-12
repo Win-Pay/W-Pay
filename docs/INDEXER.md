@@ -16,9 +16,13 @@ STELLAR_RPC_URL        overrides the network default
 ```
 
 `main.ts` runs one pass immediately, then ticks on the interval. A tick that
-overlaps a previous one is skipped. `/health` reports `ok` or `degraded` plus the
-last run time and error; `/metrics` exposes
-`wpay_indexer_last_run_timestamp_seconds`.
+overlaps a previous one is skipped. `/health` reports `ok` or `degraded`, the
+last run time, the last error and the number of unresolved projections;
+`/metrics` exposes `wpay_indexer_last_run_timestamp_seconds` and
+`wpay_indexer_unresolved_failures`. The API exposes the same state to operators
+at `GET /v1/admin/indexer/status` and `GET /v1/admin/indexer/failures`, with
+`POST /v1/admin/indexer/failures/:id/resolve` for a reviewed manual resolution
+(audit-logged).
 
 ## Ingestion algorithm
 
@@ -66,10 +70,26 @@ indexer therefore matches a single unambiguous candidate:
   amount (or period/token for settlements) and no contract id yet.
 
 If zero or more than one candidate exists, the projection is skipped and the
-event remains recorded (`applied=false`). This is intentional: the indexer never
-guesses which invoice a payment belongs to. Operators can reconcile from the
-`IndexedEvent` payload. A settled payment is never re-pointed at another
-transaction, and a contract id already linked to a different row is rejected.
+event remains recorded (`applied=false`) with an `IndexerFailure` row. This is
+intentional: the indexer never guesses which invoice a payment belongs to.
+Operators can reconcile from the `IndexedEvent` payload or the failure row. A
+settled payment is never re-pointed at another transaction, and a contract id
+already linked to a different row is rejected.
+
+## Failures, retries and dead letters
+
+- Malformed events (`kind=unknown` or an undecodable value) and projection
+  planning errors are persisted with the event and record an `IndexerFailure`
+  that has no stored projection; they require a decoder/data fix.
+- An ambiguous projection stores the planned projection JSON. Each `runOnce()`
+  first calls `retryFailures(50)`, which re-applies stored projections in a
+  transaction. A successful retry sets `resolvedAt`; a failed retry increments
+  `attempts` and keeps the row for the next tick.
+- Later successful application of the same event resolves any prior failure.
+- `IndexerFailure` is unique on `(contractId, eventIndex)`, so replays do not
+  multiply rows. Unresolved failures turn the health check to `degraded` and are
+  visible through metrics and the admin endpoints; they are never silently
+  dropped. Integration tests cover retry recovery and persistent ambiguity.
 
 ## Replay and recovery
 
@@ -95,7 +115,6 @@ between chain balances and dashboard totals.
 - Event schemas are decoded by topic order. A contract event shape change
   requires updating `decode.ts` and tests.
 - Ambiguous projections are skipped rather than guessed; they need operator
-  reconciliation.
-- No dead-letter queue: a permanently failing projection leaves the event
-  recorded with `applied=false` and stops the batch at the error (transaction
-  rolled back). Fix the data/decoder and replay.
+  reconciliation or a later retry once the matching local record exists.
+- Malformed events and projection-planning errors are dead-lettered and only
+  clear after a code/data fix; retrying them does not change their outcome.

@@ -45,25 +45,27 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 
 | Command | Result |
 | --- | --- |
-| `cargo test --manifest-path packages/contracts/Cargo.toml` | **138 tests, 18 suites, 0 failures** |
+| `cargo test --manifest-path packages/contracts/Cargo.toml` | **140 tests, 18 suites, 0 failures** (138 behaviour + 2 benchmarks) |
 | `cargo fmt --all --manifest-path packages/contracts/Cargo.toml -- --check` | clean |
 | `pnpm contracts:build` | **16/16 WASM artifacts** (20–41 KB) |
 | `pnpm typecheck` | **22/22 tasks** pass |
-| `pnpm test` | **188 passed, 2 skipped** (api 130, indexer 23, sdk 11, shared 10, e2e 10, database 4) |
+| `pnpm test` | **194 passed, 2 skipped** (api 133, indexer 25, sdk 12, shared 10, e2e 10, database 4) |
 | `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings after removing an unused declaration |
 | `pnpm build` | 15/15 tasks: api, indexer, web, merchant, admin, mobile, extension |
 | `prisma validate` / `generate` | pass |
-| API coverage | 89.23% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57% |
+| API coverage | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, platform 92.93%, auth 94.57% |
 | `node scripts/deploy-testnet.cjs` | 16/16 contracts deployed; upload/create txs `SUCCESS`; WASM hashes 16/16 |
 | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`; balances and event verified |
 | API confirmation against Testnet | invoice PAID, payment SETTLED, contractPaymentId 1; bogus/mismatched hashes rejected |
 | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Gitleaks | no leaks in tracked history |
-| Docker API image | built; container `/v1/health` returns `database: "up"` |
+| Docker API image | built; container `/v1/health` returns `database: "up"` and `/v1/health/ready` returns 200 |
+| `pnpm test:browser` | 3 Playwright checkout tests pass (mocked wallet/API) |
+| `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 min resource fee, 1,840-byte assembled envelope |
 | Helm / kubeconform / Prometheus / Alertmanager | lint, template and schema/config checks pass |
-| `scripts/db-restore-drill.sh` | restored row counts match source for core tables |
+| `scripts/db-restore-drill.sh` | restored row counts match source for core and new tables; encrypted round-trip passed; local restore ~1s |
 
-Not run: Kubernetes apply against a live cluster, browser interaction tests with
+Not run: Kubernetes apply against a live cluster, real-extension browser tests with
 Freighter, chaos/incident timing drills, and any mainnet activity.
 
 ## 3. Features
@@ -83,7 +85,7 @@ test; automated backup plus restore drill.
 
 Partial: mobile/extension are read-only; the hosted frontends still have no
 hosted API; monitoring configs validate but dashboards were not checked against
-a live scrape; browser wallet interaction is not covered by CI.
+a live scrape; browser checkout is covered by Playwright with a mocked provider only.
 
 ## 4. Security findings
 
@@ -130,8 +132,10 @@ external audit exists.
 
 1. Independent audit before mainnet; multisig/timelock key ceremony.
 2. Hosted API/indexer/Postgres and pointing the Vercel dashboards at them.
-3. Playwright browser E2E, including Freighter interaction.
-4. PITR/off-site encrypted backups (logical dump + restore drill is automated).
+3. Playwright browser E2E against the real Freighter extension (mocked checkout flow exists).
+4. PITR and scheduled off-site upload (logical dump, optional encryption and restore drill are automated).
 5. Settlement batch worker and full reconciliation report.
-6. Remote CI execution has not been observed from this workspace; workflows,
-   manifests and charts were validated locally.
+6. Remote CI runs have been inspected but none succeeded: the failures were an
+   untracked Cargo.lock, an ignored .env.example, the Gitleaks org license and an
+   invalid Trivy action tag. Those are fixed locally; a green re-run awaits a push.
+   Workflows, manifests and charts were validated locally.

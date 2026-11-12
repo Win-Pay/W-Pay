@@ -27,24 +27,37 @@ async function main(): Promise<void> {
 
   let lastRun = new Date();
   let lastError: string | null = null;
+  let lastFailures = 0;
   const port = Number(process.env.INDEXER_PORT ?? 4100);
-  createServer((request, response) => {
+  createServer(async (request, response) => {
     if (request.url === "/health") {
+      try {
+        lastFailures = await prisma.indexerFailure.count({ where: { resolvedAt: null } });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
       response.setHeader("content-type", "application/json");
       response.end(
         JSON.stringify({
-          status: lastError ? "degraded" : "ok",
+          status: lastError || lastFailures > 0 ? "degraded" : "ok",
           lastRun: lastRun.toISOString(),
           lastError,
+          unresolvedFailures: lastFailures,
           contracts: Object.keys(contracts).length,
         }),
       );
       return;
     }
     if (request.url === "/metrics") {
+      try {
+        lastFailures = await prisma.indexerFailure.count({ where: { resolvedAt: null } });
+      } catch {
+        // A metrics scrape must not fail because Postgres is briefly unavailable.
+      }
       response.setHeader("content-type", "text/plain; version=0.0.4");
       response.end(
-        `# TYPE wpay_indexer_last_run_timestamp_seconds gauge\nwpay_indexer_last_run_timestamp_seconds ${Math.floor(lastRun.getTime() / 1000)}\n`,
+        `# TYPE wpay_indexer_last_run_timestamp_seconds gauge\nwpay_indexer_last_run_timestamp_seconds ${Math.floor(lastRun.getTime() / 1000)}\n` +
+          `# TYPE wpay_indexer_unresolved_failures gauge\nwpay_indexer_unresolved_failures ${lastFailures}\n`,
       );
       return;
     }
@@ -61,8 +74,9 @@ async function main(): Promise<void> {
       const results = await indexer.runOnce();
       const inserted = results.reduce((sum, result) => sum + result.inserted, 0);
       const applied = results.reduce((sum, result) => sum + result.applied, 0);
-      if (inserted > 0 || applied > 0) {
-        console.log(`[indexer] inserted=${inserted} applied=${applied}`);
+      const failed = results.reduce((sum, result) => sum + result.failed, 0);
+      if (inserted > 0 || applied > 0 || failed > 0) {
+        console.log(`[indexer] inserted=${inserted} applied=${applied} failed=${failed}`);
       }
       lastError = null;
     } catch (error) {

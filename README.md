@@ -33,10 +33,10 @@ the missing piece is the backend deployment, not the contracts.
 
 | Area | State |
 | --- | --- |
-| 16 Soroban contracts | Implemented in Rust, 138 tests, builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented: auth, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 130 tests including real Postgres integration |
+| 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
+| REST API (NestJS) | Implemented: auth, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 133 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, baseline migration, client, seed; transactions and rollbacks covered by integration tests |
-| Indexer | Soroban RPC event ingestion, idempotent persistence, checkpoints, health/metrics, payment/refund/escrow/settlement projections |
+| Indexer | Soroban RPC event ingestion, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections |
 | TypeScript SDK | API client, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, wallet connect, signed Soroban payment submission |
 | Merchant dashboard | Login, analytics, payments, invoices, refunds |
@@ -54,8 +54,9 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   The Testnet deployer is a throwaway friendbot-funded key, not multisig.
 - The API, Postgres, Redis and indexer are not hosted; they run locally or via
   Docker Compose. The hosted Vercel pages therefore cannot process payments.
-- Wallet flows are implemented with Freighter connect/sign/submit, but browser
-  interaction tests (Playwright) do not exist; connection is not covered by CI.
+- Wallet flows are implemented with Freighter connect/sign/submit. Three
+  Playwright checkout tests mock the provider and API; real-extension signing is
+  not covered by CI.
 - The mobile app is a read-only PWA (no wallet signing), and the extension does
   not sign transactions.
 - Refund approval builds an on-chain transaction only after the indexer has
@@ -89,7 +90,7 @@ packages/
   shared/               isomorphic utilities (errors, cursors, webhook HMAC)
   config/               networks, contract env mapping, fee math
 tests/e2e/              cross-package tests
-docs/                   architecture, API, contracts, runbooks
+docs/                   architecture, API, contracts, key management, runbooks
 monitoring/ infra/ helm/ k8s/ gitops/ scripts/
 ```
 
@@ -120,7 +121,7 @@ Contracts:
 
 ```bash
 rustup target add wasm32v1-none
-pnpm contracts:test             # 138 tests across 18 suites
+pnpm contracts:test             # 140 tests across 18 suites
 pnpm contracts:build            # 16 WASM artifacts
 ```
 
@@ -130,18 +131,20 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Contract tests | `pnpm contracts:test` | 138 passed, 0 failed (18 suites) |
+| Contract tests | `pnpm contracts:test` | 140 passed, 0 failed (18 suites) |
 | Contract WASM build | `pnpm contracts:build` | 16/16 artifacts; hashes match deployed Testnet WASM |
 | Testnet deployment | `node scripts/deploy-testnet.cjs` | 16 contracts, all upload/create txs `SUCCESS` |
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` | 188 passed, 2 skipped (api 130, indexer 23, sdk 11, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.23% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57% |
+| TypeScript tests | `pnpm test` | 194 passed, 2 skipped (api 133, indexer 25, sdk 12, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57%, platform 92.93% |
+| Browser tests | `pnpm test:browser` | 3 passed (mocked Freighter + API) |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
-| Backup restore drill | `scripts/db-restore-drill.sh` | source and restored row counts match |
+| Backup restore drill | `scripts/db-restore-drill.sh` | source and restored row counts match; encrypted round-trip passed; local restore ~1s |
+| Testnet resources | `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 stroops min resource fee, 1,840-byte assembled envelope |
 
 These results come from the commands above in this repository. The on-chain
 claim is limited to the recorded Testnet transactions in

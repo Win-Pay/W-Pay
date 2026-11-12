@@ -21,6 +21,26 @@ groups:
           summary: "W-Pay indexer has not completed a run in 5 minutes"
           description: "Indexed payment state will drift from the chain until the indexer recovers."
 
+      - alert: WPayIndexerDown
+        expr: up{job="wpay-indexer"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "W-Pay indexer is down"
+          description: "No indexer metrics for 5 minutes; the projection is no longer advancing."
+
+      - alert: WPayIndexerFailures
+        expr: wpay_indexer_unresolved_failures > 0
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "W-Pay indexer has unresolved projection failures"
+          description: "Events could not be projected for 15 minutes. Inspect /v1/admin/indexer/failures and reconcile before resolving."
+
       - alert: WPayNoContractsConfigured
         expr: wpay_contracts_configured == 0
         for: 10m

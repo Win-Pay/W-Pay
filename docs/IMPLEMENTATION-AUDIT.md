@@ -14,7 +14,7 @@ not fully exercised; **open** = not implemented.
 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
-| Compile all 16 Soroban contracts | done | `pnpm contracts:test` 138/138; `pnpm contracts:build` produces 16 artifacts |
+| Compile all 16 Soroban contracts | done | `pnpm contracts:test` 140/140 (138 behaviour + 2 resource benchmarks); `pnpm contracts:build` produces 16 artifacts |
 | Verify the 12 previously claimed addresses | done | [DEPLOYMENTS.md](../DEPLOYMENTS.md) records all 16 ids, upload/create transactions and WASM hashes generated from `deployments/testnet.json` |
 | Deploy the four missing contracts | done | `scripts/deploy-testnet.cjs` is idempotent and deployed 16/16 on Testnet; missing ids are included in the table |
 | Verify WASM hashes | done | SHA-256 in `DEPLOYMENTS.md` matches the built artifacts for 16/16 |
@@ -37,9 +37,13 @@ not fully exercised; **open** = not implemented.
 | --- | --- | --- |
 | Postgres integration tests with transactions/rollbacks | done | `apps/api/src/postgres.integration.test.ts`, `blockchain.integration.test.ts`, `webhooks/webhooks.integration.test.ts` |
 | Payment/refund idempotency | done | idempotency handling in `apps/api/src/modules/payments.ts` and refund approval path |
-| API line coverage ≥80%, money paths ≥90% | done | 89.23% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57% |
+| API line coverage ≥80%, money paths ≥90% | done | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, platform 92.93%, auth 94.57% |
 | Distributed rate limiting | done | `RedisRateLimitStore` in `apps/api/src/rate-limit.store.ts`; in-process fallback warns |
 | Webhook signature/retry/DLQ tests | done | signature and timestamp checks; retry then `FAILED` dead-letter and requeue in `webhooks.integration.test.ts` |
+| Health, readiness and dependency failures | done | `/health/ready` probes Postgres and Soroban RPC (`getLatestLedger`), returning 503; storage/Redis failures propagate |
+| Production CORS/auth configuration | done | `WEB_PUBLIC_URL` + `CORS_ORIGINS` allowlist; localhost only outside production |
+| Settlement batch processing | done/partial | operator batch API, duplicate/period checks, link/intents/execute/cancel, SDK builders and Postgres tests; automatic worker and funding automation remain open |
+| Indexer dead-letter/retry/recovery | done | `IndexerFailure`, retry on every tick, resolved-on-success, health/metrics/admin endpoints; recovery tests |
 
 ## Frontend and wallet
 
@@ -48,7 +52,7 @@ not fully exercised; **open** = not implemented.
 | Checkout submits real Soroban transactions | done | `apps/web` builds and submits signed XDR through the API; the API verifies the result |
 | Invoice/payment/merchant/admin/pause flows | done | API and dashboards implement these; admin pause builds the intent transaction |
 | Loading/error/confirmation states, no simulated success | done | no settled state without an API/on-chain result; refund approval returns `409` while unlinked |
-| Browser wallet interaction tested | **partial** | Freighter connect/sign/submit implemented, but no Playwright or real-extension test exists |
+| Browser wallet interaction tested | **partial** | Freighter connect/sign/submit implemented; 3 Playwright tests use a mocked provider and mocked API. Real-extension signing is not tested |
 
 ## Security
 
@@ -57,10 +61,12 @@ not fully exercised; **open** = not implemented.
 | Threat model and authorization review | done | [THREAT_MODEL.md](THREAT_MODEL.md), [AUDIT.md](AUDIT.md) |
 | Treasury/escrow/refund accounting | done | checked arithmetic and caps in contracts; reconciliation guidance in [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md) |
 | Upgrade mechanism review | done | upgrade manager requires proposal, delay and authority; delay configuration remains an operational task |
-| Regression tests for findings | done | SSRF, rate limit, challenge, refund linkage and confirmation tests |
+| Regression tests for findings | done | SSRF, rate limit, challenge, refund linkage, confirmation, settlement batch, indexer retry tests |
+| Key management design | done/partial | [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md) documents 2-of-3 multisig, HSM and timelock ceremony; not executed, no Mainnet authority exists |
+| Soroban resource benchmarks | done | two `WPAY_BENCH` tests plus `pnpm measure:testnet` (RPC simulation and recorded transaction fees/sizes) |
 | Enforceable dependency checks | done | `pnpm audit --prod --audit-level=high` in CI; lockfile; transitive overrides |
 | Pin Docker digests and package-manager versions | done | base images and CI services pinned by digest; `packageManager` pinned in `package.json` |
-| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks run locally clean; CodeQL, Trivy and dependency review configured in `security.yml`; cosign signing in `deploy.yml`; no remote CI run observed |
+| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally; CodeQL, Trivy and dependency review configured in `security.yml`; cosign signing in `deploy.yml`. Remote runs previously failed on CI setup issues that are now fixed locally; no green remote run observed |
 | Prepare contracts for independent audit | **partial** | tests, docs and recorded deployment exist; no independent audit has occurred |
 | Never claim an external audit | done | README, SECURITY, AUDIT and the final report state that none occurred |
 
@@ -69,9 +75,9 @@ not fully exercised; **open** = not implemented.
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | k6 wired into CI | done | `loadtest/wpay.k6.js` and the `loadtest` job in `.github/workflows/ci.yml` |
-| PostgreSQL backup workflow and restore drill | done | `.github/workflows/backup.yml`, `scripts/db-backup.sh`, `scripts/db-restore-drill.sh`; drill executed with matching counts |
+| PostgreSQL backup workflow and restore drill | done | `.github/workflows/backup.yml`, `scripts/db-backup.sh`, `scripts/db-restore-drill.sh`; drill executed with matching counts; optional GPG encryption and encrypted restore verified locally; local restore ~1s |
 | Docker Compose verified | done | `docker compose config` validates; API image builds and passes health smoke |
-| Kubernetes/Helm/Prometheus/Grafana/GitOps validated | done/partial | kubeconform, Helm lint/template, promtool and amtool pass; no cluster apply, live scrape or Argo sync observed |
+| Kubernetes/Helm/Prometheus/Grafana/GitOps validated | done/partial | kubeconform, Helm lint/template, promtool and amtool passed in this checkout; no cluster apply, live scrape or Argo sync observed. Compose and Helm re-checked 2026-11-12; kubeconform/promtool/amtool were not installed at the final re-check |
 
 ## Documentation reconciliation
 
@@ -86,15 +92,16 @@ not fully exercised; **open** = not implemented.
 | `docs/INDEXER.md` | Ingestion, projections, replay and limitations |
 | `docs/TESTING.md` | Commands and actual counts |
 | `docs/DEPLOYMENT.md` | Testnet automation, production steps, backup |
-| `docs/DISASTER_RECOVERY.md` | Automated backups and remaining DR gaps |
+| `docs/DISASTER_RECOVERY.md` | Automated backups, encryption, measured local restore and remaining DR gaps |
+| `docs/KEY_MANAGEMENT.md` | Multisig/HSM/timelock design and ceremony checklist |
 | `docs/ENGINEERING_REPORT.md` | Build history and verified results |
 | `docs/FINAL-ENGINEERING-REPORT.md` | Acceptance record and blockers |
 
 ## Open items
 
 1. Independent contract audit and multisig/timelock key ceremony.
-2. Hosted backend with PITR and off-site encrypted backups.
-3. Playwright wallet tests; browser interaction is not covered by CI.
+2. Hosted backend with PITR and scheduled off-site upload of encrypted backups.
+3. Real-extension Playwright tests; current browser tests mock Freighter.
 4. Settlement batch worker and reconciliation report.
-5. Remote CI run, cluster deployment, alert delivery, measured RTO/RPO.
+5. Green remote CI after the workflow/tracking fixes are pushed, cluster deployment, alert delivery, and measured production RTO/RPO (only logical restore time is measured).
 6. Mainnet deployment. None has occurred.

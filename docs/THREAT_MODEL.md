@@ -35,9 +35,11 @@
 | Webhook forgery | Fake payment events | HMAC-SHA256 over timestamp + body, constant-time compare | Implemented |
 | Challenge replay | Session hijack | Single-use, expiring challenge bound to domain | Implemented; challenges persist in the `WalletNonce` table, so any replica can verify |
 | Rate-limit bypass | DoS/brute force | Per-IP limiter | Redis-backed when `REDIS_URL` is set; per-process fallback otherwise (quota multiplies per replica) |
-| Indexer poisoning | False state | Only contract events for configured ids are accepted; upserts idempotent | Implemented |
+| Indexer poisoning | False state | Only contract events for configured ids are accepted; upserts idempotent; ambiguous projections are dead-lettered and never guessed | Implemented + tested |
 | Supply chain | Backdoor | Lockfile, pnpm build allow-list, CodeQL, Trivy, gitleaks, dependency review | Configured in CI |
 | Admin key compromise | Full control | Recommend multisig, delayed upgrade, pause | Process control, not code |
+| Cross-origin credential abuse | Token theft via hostile origin | CORS allowlist (`WEB_PUBLIC_URL` + explicit `CORS_ORIGINS`); localhost only outside production | Implemented |
+| Backup disclosure | Off-chain data leak | Client-side GPG encryption for off-site copies; plaintext GitHub artifacts are repository-private | Implemented; scheduling off-site upload is an operator task |
 | Malicious upgrade | Contract takeover | Upgrade manager requires proposal + delay + authority | Implemented; delay values must be configured |
 
 ## Trust boundaries
@@ -60,6 +62,7 @@
 ## Residual risks
 
 Unaudited contracts, centralized admin powers, and no operational track record.
-Testing is limited to the Soroban host and a single Testnet deployment; there is
-no mainnet, load, failover or browser-wallet test result. Do not handle real
-value without an independent audit and a staged rollout.
+Testing is limited to the Soroban host, a single Testnet deployment, local load
+and mocked-browser tests; there is no mainnet, failover or real-extension test
+result. Do not handle real value without an independent audit and a staged
+rollout.

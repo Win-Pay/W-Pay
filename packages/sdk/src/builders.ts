@@ -220,6 +220,80 @@ export const calls = {
     };
   },
 
+  /** SettlementManager.open_window(operator, token, period_start, period_end) */
+  openSettlementWindow(input: {
+    operator: string;
+    token: string;
+    periodStart: number;
+    periodEnd: number;
+  }): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "open_window",
+      args: [
+        scv.address(input.operator),
+        scv.address(input.token),
+        scv.u64(input.periodStart),
+        scv.u64(input.periodEnd),
+      ],
+    };
+  },
+
+  /** SettlementManager.add_entry(operator, window_id, payee, amount) */
+  addSettlementEntry(input: {
+    operator: string;
+    windowId: bigint | number;
+    payee: string;
+    amount: bigint;
+  }): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "add_entry",
+      args: [
+        scv.address(input.operator),
+        scv.u64(input.windowId),
+        scv.address(input.payee),
+        scv.i128(input.amount),
+      ],
+    };
+  },
+
+  /** SettlementManager.close_window(operator, window_id) */
+  closeSettlementWindow(operator: string, windowId: bigint | number): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "close_window",
+      args: [scv.address(operator), scv.u64(windowId)],
+    };
+  },
+
+  /** SettlementManager.execute(operator, window_id) — pays every entry. */
+  executeSettlementWindow(operator: string, windowId: bigint | number): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "execute",
+      args: [scv.address(operator), scv.u64(windowId)],
+    };
+  },
+
+  /** SettlementManager.cancel(admin, window_id) */
+  cancelSettlementWindow(admin: string, windowId: bigint | number): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "cancel",
+      args: [scv.address(admin), scv.u64(windowId)],
+    };
+  },
+
+  /** SettlementManager.fund(from, token, amount) — permissionless pool top-up. */
+  fundSettlementPool(input: { from: string; token: string; amount: bigint }): ContractCall {
+    return {
+      contract: "settlementManager",
+      method: "fund",
+      args: [scv.address(input.from), scv.address(input.token), scv.i128(input.amount)],
+    };
+  },
+
   /** EmergencyPause.pause_all(caller) */
   pauseAll(caller: string): ContractCall {
     return { contract: "emergencyPause", method: "pause_all", args: [scv.address(caller)] };

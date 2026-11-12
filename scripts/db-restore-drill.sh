@@ -15,11 +15,12 @@ CONTAINER="${WPAY_PG_CONTAINER:-w-pay-postgres-1}"
 DB_USER="${POSTGRES_USER:-wpay}"
 DB_NAME="${POSTGRES_DB:-wpay}"
 SCRATCH="wpay_restore_drill_$$"
-TABLES=(User Merchant Payment Invoice Refund IndexedEvent IndexerCheckpoint _prisma_migrations)
+TABLES=(User Merchant Payment Invoice Refund IndexedEvent IndexerCheckpoint IndexerFailure SettlementWindow SettlementEntry _prisma_migrations)
 
 cleanup() {
   run_psql postgres "DROP DATABASE IF EXISTS \"$SCRATCH\";" >/dev/null 2>&1 || true
   if [ -n "${TMP_DUMP:-}" ] && [ -f "$TMP_DUMP" ]; then rm -f "$TMP_DUMP"; fi
+  if [ -n "${TMP_PLAIN:-}" ] && [ -f "$TMP_PLAIN" ]; then rm -f "$TMP_PLAIN"; fi
 }
 trap cleanup EXIT
 
@@ -73,11 +74,25 @@ if [ ! -s "$DUMP" ]; then
   exit 1
 fi
 
+if [[ "$DUMP" == *.gpg ]]; then
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "error: encrypted backup requires gpg with the matching secret key" >&2
+    exit 1
+  fi
+  TMP_PLAIN="$(mktemp -t wpay-backup-XXXXXX.dump)"
+  gpg --batch --yes --output "$TMP_PLAIN" --decrypt "$DUMP"
+  DUMP="$TMP_PLAIN"
+  echo "== decrypted backup"
+fi
+
+RESTORE_STARTED_AT="$(date +%s)"
 echo "== creating scratch database $SCRATCH"
 run_psql postgres "CREATE DATABASE \"$SCRATCH\";"
 
 echo "== restoring $(basename "$DUMP")"
 run_restore "$TARGET_URL" "$DUMP"
+RESTORE_SECONDS="$(( $(date +%s) - RESTORE_STARTED_AT ))"
+echo "== restore wall time: ${RESTORE_SECONDS}s (scratch database creation + pg_restore)"
 
 echo "== comparing row counts"
 failed=0

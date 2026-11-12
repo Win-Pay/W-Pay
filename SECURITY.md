@@ -28,6 +28,12 @@ infrastructure you operate without following this repository's guidance.
   addresses; redirects are refused. Registration and delivery both check.
 - Rate limits use Redis when `REDIS_URL` is set; otherwise the API warns and
   falls back to per-process counters.
+- CORS in production allows only `WEB_PUBLIC_URL` plus explicit `CORS_ORIGINS`.
+- Readiness fails when Postgres or Soroban RPC is unreachable.
+- Indexer projection failures are retained as dead letters, retried and surfaced
+  to admins; ambiguous events are never guessed.
+- Backups can be encrypted with a GPG public key before off-site storage; the
+  restore drill decrypts and verifies them.
 - No contract has been independently audited. The 16 contracts are deployed on
   **Testnet only**, under a throwaway deployer key with no real funds.
 
@@ -39,8 +45,11 @@ See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and the findings section of
 - per-replica rate limiting when Redis is not configured;
 - wallet challenges are single-use and expiry-bound in Postgres, but there is no
   additional replay cache;
-- contract admin keys are powerful (fee cap, pause, upgrade proposals);
+- contract admin keys are powerful (fee cap, pause, upgrade proposals); the
+  proposed 2-of-3 multisig/HSM/timelock design is in
+  [docs/KEY_MANAGEMENT.md](docs/KEY_MANAGEMENT.md) and has not been executed;
 - JWT tokens are stored in `localStorage` in the dashboards;
+- browser checkout tests mock Freighter; real-extension signing is untested;
 - the browser extension requests broad host permissions;
 - no external audit, no formal verification, no mainnet deployment;
 - `cargo audit` reports RUSTSEC-2026-0387 in `crypto-bigint` 0.5.5, reached via

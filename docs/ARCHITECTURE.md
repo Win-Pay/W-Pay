@@ -60,7 +60,10 @@ privileged mutation, rate limiting, request correlation ids.
 Polls Soroban RPC `getEvents` from a persisted checkpoint, decodes contract
 events, and applies them in idempotent upserts keyed by ledger + event id.
 `planPaymentUpdate` is a pure function so status transitions can be tested
-without a database. Exposes `/health` and `/metrics`.
+without a database. Ambiguous or malformed projections are stored as
+`IndexerFailure` dead letters and retried each tick; `/health` reports
+`degraded`, `/metrics` exposes the unresolved count, and the API exposes admin
+list/resolve endpoints.
 
 ### `packages/contracts`
 16 Soroban contracts plus `wpay-common` (shared types, access control, pause,
@@ -85,8 +88,10 @@ wallet adapters (Freighter + raw secret-key signer). Shared by apps and
    router pulls funds from the payer into contract custody and emits a
    `payment` event with the assigned id and fee split.
 4. The indexer records the payment, its fee split and settlement state.
-5. Settlement moves net funds to the merchant's settlement address and the fee
-   to the treasury, emitting settlement events.
+5. The router splits the payment at settlement time: net to the merchant's
+   settlement address and fee to the treasury, emitting events. Separately,
+   operators can build a funded settlement-window batch (up to 20 entries) for
+   pooled payouts.
 6. Refunds are approved by the merchant settlement address (funds owner), then
    executed by the refund manager; escrows follow their own state machine.
 
@@ -98,11 +103,12 @@ floor rounding, and the router enforces `fee <= gross`. Splitting is exact:
 
 | Failure | Behaviour |
 | --- | --- |
-| RPC unavailable | Intent returns `503`; nothing recorded as paid |
+| RPC unavailable | Intent returns `503`; readiness returns `503`; nothing recorded as paid |
 | Transaction `FAILED` | Payment stays `PENDING` with the failure reason stored |
 | Indexer lag | Dashboards show projection timestamp; settlement waits on confirmation |
 | Duplicate webhook | Idempotency key per event; delivery log deduplicates |
 | Duplicate payment request | Same idempotency key returns the original record |
+| Indexer projection failure | Durable dead letter, automatic retry, `degraded` health until resolved |
 | Pause triggered | Contract-level pause rejects mutations; API surfaces the reason |
 
 ## Deployment topology
