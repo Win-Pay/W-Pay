@@ -118,6 +118,8 @@ export const ServerEnvSchema = z.object({
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(6),
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+  /** Enables the shared rate-limit counters; unset means in-process counters. */
+  REDIS_URL: z.string().url().optional(),
   ADMIN_ADDRESSES: z.string().default(""),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });

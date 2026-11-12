@@ -9,6 +9,7 @@ allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
   '@scarf/scarf': true
+  '@swc/core': true
   esbuild: true
   prisma: true
   sharp: true
@@ -20,3 +21,4 @@ onlyBuiltDependencies:
   - esbuild
   - sharp
   - "@scarf/scarf"
+  - "@swc/core"

@@ -326,18 +326,32 @@ export class PlatformService {
   }
 
   async pauseAll(user: AuthUser): Promise<TransactionIntent> {
-    const intent = await this.soroban.pauseAllIntent(user.stellarAddress ?? "");
+    const caller = requireStellarAddress(user);
+    const intent = await this.soroban.pauseAllIntent(caller);
     if (!intent) throw new BadRequestException("EmergencyPause is not configured");
     await this.audit.record(user, "emergency.pause_all", "EmergencyPause", null, {});
     return intent;
   }
 
   async unpauseAll(user: AuthUser): Promise<TransactionIntent> {
-    const intent = await this.soroban.unpauseAllIntent(user.stellarAddress ?? "");
+    const caller = requireStellarAddress(user);
+    const intent = await this.soroban.unpauseAllIntent(caller);
     if (!intent) throw new BadRequestException("EmergencyPause is not configured");
     await this.audit.record(user, "emergency.unpause_all", "EmergencyPause", null, {});
     return intent;
   }
+}
+
+/**
+ * Emergency actions are signed by the caller's wallet, so an account without a
+ * linked Stellar address cannot invoke them. Building the call with an empty
+ * address used to surface as an opaque 500 from the SDK; fail with a clear 400.
+ */
+function requireStellarAddress(user: AuthUser): string {
+  if (!user.stellarAddress) {
+    throw new BadRequestException("a linked Stellar address is required for this action");
+  }
+  return user.stellarAddress;
 }
 
 const WithdrawSchema = z.object({

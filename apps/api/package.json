@@ -5,7 +5,7 @@
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/main.ts",
+    "dev": "node --watch -r @swc-node/register src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.serverless.json",
     "lint": "oxlint src",
@@ -27,16 +27,20 @@
     "@wpay/types": "workspace:*",
     "bcryptjs": "^2.4.3",
     "helmet": "^8.0.0",
+    "redis": "^4.7.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@swc-node/register": "^1.12.1",
+    "@swc/core": "^1.16.22",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
     "@types/swagger-ui-express": "^4.1.7",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "unplugin-swc": "^1.6.0"
   }
 }

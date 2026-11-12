@@ -21,6 +21,12 @@ import type { ZodSchema } from "zod";
 import type { UserRole } from "@wpay/types";
 import { APP_CONFIG, type AppConfig } from "./config";
 import { PrismaService } from "./prisma.service";
+import {
+  MemoryRateLimitStore,
+  RedisRateLimitStore,
+  createRedisClient,
+  type RateLimitStore,
+} from "./rate-limit.store";
 
 /* ------------------------------------------------------------------ */
 /* Request user                                                        */
@@ -147,43 +153,35 @@ export class RolesGuard implements CanActivate {
 }
 
 /* ------------------------------------------------------------------ */
-/* Rate limiting (fixed window, in-process)                            */
+/* Rate limiting (fixed window, Redis-backed with in-process fallback) */
 /* ------------------------------------------------------------------ */
-
-interface Bucket {
-  count: number;
-  resetAt: number;
-}
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  private readonly buckets = new Map<string, Bucket>();
+  /**
+   * Counters live in Redis when REDIS_URL is set, so the quota is shared by
+   * every replica. Without it the guard falls back to an in-process store,
+   * which is correct for a single replica and for local development.
+   */
+  private readonly store: RateLimitStore;
+  private readonly limit: number;
+  private readonly windowMs = 60_000;
 
-  constructor(
-    @Inject(APP_CONFIG) config: AppConfig,
-    private readonly windowMs = 60_000,
-  ) {
+  constructor(@Inject(APP_CONFIG) config: AppConfig) {
     this.limit = config.env.RATE_LIMIT_PER_MINUTE;
+    this.store = config.env.REDIS_URL
+      ? new RedisRateLimitStore(createRedisClient(config.env.REDIS_URL))
+      : new MemoryRateLimitStore();
   }
 
-  private readonly limit: number;
-
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
     if (request.method === "OPTIONS") return true;
     const key = request.user?.id ?? request.ip ?? "anonymous";
-    const now = Date.now();
-    const bucket = this.buckets.get(key);
-
-    if (!bucket || bucket.resetAt <= now) {
-      this.buckets.set(key, { count: 1, resetAt: now + this.windowMs });
-      this.sweep(now);
-      return true;
-    }
-    bucket.count += 1;
-    if (bucket.count > this.limit) {
+    const decision = await this.store.hit(key, this.windowMs);
+    if (decision.count > this.limit) {
       const response = context.switchToHttp().getResponse<Response>();
-      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+      const retryAfter = Math.max(1, Math.ceil((decision.resetAt - Date.now()) / 1000));
       response.setHeader("retry-after", String(retryAfter));
       throw new HttpException(
         { statusCode: 429, code: "RATE_LIMITED", message: "too many requests", retryAfter },
@@ -191,13 +189,6 @@ export class RateLimitGuard implements CanActivate {
       );
     }
     return true;
-  }
-
-  private sweep(now: number): void {
-    if (this.buckets.size < 10_000) return;
-    for (const [key, bucket] of this.buckets) {
-      if (bucket.resetAt <= now) this.buckets.delete(key);
-    }
   }
 }
 

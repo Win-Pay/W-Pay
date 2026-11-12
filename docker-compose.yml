@@ -18,6 +18,19 @@ services:
       timeout: 5s
       retries: 10
 
+  # Shared rate-limit counters. Without it the API falls back to per-process
+  # counters, which multiplies the quota by the number of replicas.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: .
@@ -32,10 +45,13 @@ services:
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
       ADMIN_ADDRESSES: ${ADMIN_ADDRESSES:-}
       SOROBAN_SOURCE_SECRET: ${SOROBAN_SOURCE_SECRET:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
       - "4000:4000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   indexer:
