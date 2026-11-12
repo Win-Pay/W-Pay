@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +9,7 @@ import { backoffDelayMs, signWebhook } from "@wpay/shared";
 import type { CreateWebhookInput, WebhookEvent } from "@wpay/types";
 import { PrismaService } from "../prisma.service";
 import { requireMerchantAccess, type AuthUser } from "../common";
+import { allowPrivateWebhookTargets, assertSafeWebhookUrl } from "./url-guard";
 
 const SECRET_PREFIX = "whsec_";
 
@@ -39,9 +39,9 @@ export class WebhooksService implements OnModuleInit {
     const merchant = await this.prisma.merchant.findUnique({ where: { id: input.merchantId } });
     if (!merchant) throw new NotFoundException("merchant not found");
     requireMerchantAccess(user, merchant);
-    if (!input.url.startsWith("https://") && process.env.NODE_ENV === "production") {
-      throw new BadRequestException("webhook endpoints must use https in production");
-    }
+    await assertSafeWebhookUrl(input.url, {
+      requireHttps: process.env.NODE_ENV === "production",
+    });
     const secret = `${SECRET_PREFIX}${randomBytes(24).toString("hex")}`;
     const row = await this.prisma.webhookEndpoint.create({
       data: {
@@ -222,6 +222,11 @@ export class WebhooksService implements OnModuleInit {
     let error: string | undefined;
 
     try {
+      if (!allowPrivateWebhookTargets()) {
+        await assertSafeWebhookUrl(delivery.endpoint.url, {
+          requireHttps: process.env.NODE_ENV === "production",
+        });
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), Number(process.env.WEBHOOK_TIMEOUT_MS ?? 5_000));
       const response = await fetch(delivery.endpoint.url, {
@@ -229,6 +234,7 @@ export class WebhooksService implements OnModuleInit {
         headers: { "content-type": "application/json", ...headers },
         body,
         signal: controller.signal,
+        redirect: "error",
       }).finally(() => clearTimeout(timer));
       status = response.status;
       if (!response.ok) error = `HTTP ${response.status}`;

@@ -3,7 +3,7 @@
 # only; production runs on Kubernetes with secrets from a secret manager.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-wpay}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wpay_local_only}
@@ -21,7 +21,7 @@ services:
   # Shared rate-limit counters. Without it the API falls back to per-process
   # counters, which multiplies the quota by the number of replicas.
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379"

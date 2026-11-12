@@ -150,11 +150,12 @@ model Payment {
   refunded          BigInt        @default(0)
   status            PaymentStatus @default(PENDING)
   memo              String?
-  txHash            String?       @unique
-  contractPaymentId BigInt?       @unique
-  ledger            Int?
-  createdAt         DateTime      @default(now())
-  settledAt         DateTime?
+  txHash             String?       @unique
+  contractPaymentId  BigInt?       @unique
+  contractMerchantId BigInt?
+  ledger             Int?
+  createdAt          DateTime      @default(now())
+  settledAt          DateTime?
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
   refunds  Refund[]
@@ -162,6 +163,7 @@ model Payment {
 
   @@index([merchantId, createdAt])
   @@index([payerAddress, createdAt])
+  @@index([contractMerchantId])
   @@index([status])
 }
 
@@ -174,16 +176,20 @@ model Invoice {
   memo          String?
   status        InvoiceStatus @default(OPEN)
   dueAt         DateTime
-  paidAt        DateTime?
-  paymentId     String?       @unique
-  customerEmail String?
-  createdAt     DateTime      @default(now())
+  paidAt            DateTime?
+  paymentId         String?       @unique
+  contractInvoiceId BigInt?       @unique
+  contractPaymentId BigInt?
+  txHash            String?
+  customerEmail     String?
+  createdAt         DateTime      @default(now())
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
   payment  Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([merchantId, status])
   @@index([dueAt, status])
+  @@index([contractPaymentId])
 }
 
 model Escrow {
@@ -205,6 +211,7 @@ model Escrow {
 
   @@index([merchantId, status])
   @@index([payerAddress, createdAt])
+  @@index([txHash])
 }
 
 model Refund {
@@ -214,16 +221,18 @@ model Refund {
   payerAddress  String
   amount        BigInt
   reason        String
-  status        RefundStatus @default(PENDING)
-  txHash        String?
-  createdAt     DateTime     @default(now())
-  decidedAt     DateTime?
+  status           RefundStatus @default(PENDING)
+  contractRefundId BigInt?      @unique
+  txHash           String?
+  createdAt        DateTime     @default(now())
+  decidedAt        DateTime?
 
   payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
 
   @@index([merchantId, status])
   @@index([paymentId])
+  @@index([txHash])
 }
 
 model SubscriptionPlan {
@@ -251,6 +260,7 @@ model Subscription {
   nextDueAt      DateTime
   status         SubscriptionStatus @default(ACTIVE)
   contractSubId  BigInt?            @unique
+  txHash         String?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
@@ -334,7 +344,7 @@ model IndexedEvent {
   contractId  String
   ledger      Int
   txHash      String
-  eventIndex  Int
+  eventIndex  String
   kind        String
   payload     Json
   processedAt DateTime @default(now())

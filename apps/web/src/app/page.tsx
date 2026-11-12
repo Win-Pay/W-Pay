@@ -83,7 +83,7 @@ export default function CheckoutPage(): React.ReactElement {
     try {
       const walletApi = freighter();
       if (!walletApi || !wallet) throw new Error("connect a wallet first");
-      const intent = await api.invoices.payIntent(invoice.number);
+      const intent = await api.invoices.payIntent(invoice.number, wallet);
       const signed = await walletApi.signTransaction(intent.xdr, {
         networkPassphrase: intent.networkPassphrase,
       });
@@ -92,11 +92,12 @@ export default function CheckoutPage(): React.ReactElement {
         "/v1/transactions/submit",
         { xdr: signed.signedTxXdr },
       );
-      setResult(
-        submitted.status === "SUCCESS"
-          ? `Payment confirmed: ${submitted.hash}`
-          : `Transaction ${submitted.status}: ${submitted.hash}`,
-      );
+      if (submitted.status !== "SUCCESS") {
+        throw new Error(`transaction ${submitted.status.toLowerCase()} (${submitted.hash})`);
+      }
+      const confirmed = await api.invoices.confirmPayment(invoice.number, submitted.hash);
+      setInvoice(confirmed);
+      setResult(`Payment confirmed on chain: ${submitted.hash}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "payment failed");
     } finally {

@@ -1,7 +1,30 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Address, Transaction, TransactionBuilder, rpc, scValToNative } from "@stellar/stellar-sdk";
 import { SorobanGateway, calls, keypairSigner, type WalletSigner } from "@wpay/sdk";
 import type { TransactionIntent } from "@wpay/types";
 import { APP_CONFIG, type AppConfig } from "./config";
+
+export interface VerifiedPayment {
+  txHash: string;
+  ledger: number;
+  contractPaymentId: bigint;
+  payer: string;
+  merchantId: bigint;
+  token: string;
+  amount: bigint;
+  fee: bigint;
+}
+
+function toBigInt(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Builds unsigned Soroban transactions for client wallets.
@@ -228,6 +251,127 @@ export class SorobanService {
       calls.withdrawTreasury(input),
       "Withdraw from treasury",
     );
+  }
+
+  requestRefundIntent(input: {
+    payer: string;
+    paymentId: bigint;
+    amount: bigint;
+    reason: string;
+  }): Promise<TransactionIntent | null> {
+    return this.intent(
+      "refundManager",
+      input.payer,
+      calls.requestRefund(input),
+      "Request refund on chain",
+    );
+  }
+
+  /**
+   * Verifies that a successful transaction is exactly the payment this API
+   * expects: the PaymentRouter invocation args must match, and the PaymentRouter
+   * `payment` event in the same transaction must match the invocation and the
+   * caller's expected values. Returns null instead of guessing.
+   */
+  async verifyPaymentTransaction(
+    txHash: string,
+    ledger: number,
+    expected?: { payer: string; merchantId: bigint; token: string; amount: bigint },
+  ): Promise<VerifiedPayment | null> {
+    if (!this.has("paymentRouter")) return null;
+    const contractId = this.gateway.contractId("paymentRouter");
+
+    const response = await this.gateway.server.getTransaction(txHash);
+    if (response.status !== rpc.Api.GetTransactionStatus.SUCCESS) return null;
+    if (!("envelopeXdr" in response) || !response.envelopeXdr) return null;
+
+    const transaction = TransactionBuilder.fromXDR(
+      response.envelopeXdr,
+      this.config.network.networkPassphrase,
+    );
+    if (!(transaction instanceof Transaction)) return null;
+    const operation = transaction.operations.find((entry) => entry.type === "invokeHostFunction");
+    if (!operation || operation.type !== "invokeHostFunction") return null;
+
+    const invocation = operation.func.invokeContract();
+    if (Address.fromScAddress(invocation.contractAddress()).toString() !== contractId) return null;
+    if (invocation.functionName().toString() !== "create_payment") return null;
+
+    const args = invocation.args().map((arg) => scValToNative(arg));
+    const [argPayer, argMerchant, argToken, argAmount] = args;
+    const payerArg = typeof argPayer === "string" ? argPayer : null;
+    const merchantArg = toBigInt(argMerchant);
+    const tokenArg = typeof argToken === "string" ? argToken : null;
+    const amountArg = toBigInt(argAmount);
+    if (!payerArg || merchantArg === null || !tokenArg || amountArg === null) return null;
+
+    if (
+      expected &&
+      (payerArg !== expected.payer ||
+        merchantArg !== expected.merchantId ||
+        tokenArg !== expected.token ||
+        amountArg !== expected.amount)
+    ) {
+      return null;
+    }
+
+    const isPaymentEvent = (candidate: rpc.Api.EventResponse): boolean => {
+      const kindTopic = candidate.topic[0];
+      return (
+        candidate.txHash === txHash &&
+        candidate.topic.length > 1 &&
+        kindTopic !== undefined &&
+        scValToNative(kindTopic) === "payment"
+      );
+    };
+
+    let eventResponse: rpc.Api.GetEventsResponse | undefined;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      eventResponse = await this.gateway.server.getEvents({
+        startLedger: ledger,
+        // Some RPC providers return no events for an exact single-ledger range.
+        endLedger: ledger + 5,
+        filters: [{ type: "contract", contractIds: [contractId] }],
+        limit: 200,
+      });
+      if ((eventResponse.events ?? []).some(isPaymentEvent)) break;
+      await sleep(500);
+    }
+
+    const event = (eventResponse?.events ?? []).find(isPaymentEvent);
+    if (!event) return null;
+
+    const paymentIdTopic = event.topic[1];
+    if (paymentIdTopic === undefined) return null;
+    const contractPaymentId = toBigInt(scValToNative(paymentIdTopic));
+    const data = scValToNative(event.value);
+    if (contractPaymentId === null || !Array.isArray(data)) return null;
+    const [eventPayer, eventMerchant, eventAmount, eventFee] = data;
+    const payer = typeof eventPayer === "string" ? eventPayer : null;
+    const merchantId = toBigInt(eventMerchant);
+    const amount = toBigInt(eventAmount);
+    const fee = toBigInt(eventFee);
+    if (!payer || merchantId === null || amount === null || fee === null) return null;
+
+    if (
+      payer !== payerArg ||
+      merchantId !== merchantArg ||
+      amount !== amountArg ||
+      (expected && (payer !== expected.payer || merchantId !== expected.merchantId || amount !== expected.amount))
+    ) {
+      return null;
+    }
+
+    return {
+      txHash,
+      ledger,
+      contractPaymentId,
+      payer,
+      merchantId,
+      token: tokenArg,
+      amount,
+      fee,
+    };
   }
 
   /** Submits a wallet-signed XDR and waits for the final ledger status. */

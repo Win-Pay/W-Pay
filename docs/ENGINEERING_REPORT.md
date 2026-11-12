@@ -2,7 +2,9 @@
 
 Date: 2026-11-12
 Scope: original W-Pay build extending the existing workspace (4 contracts and a
-TS skeleton), rebranded and completed. No deployment was performed.
+TS skeleton), rebranded and completed, followed by gap closure. All 16 contracts
+were deployed to Stellar Testnet and an end-to-end Testnet payment was verified.
+No mainnet deployment and no external audit occurred.
 
 ## 1. Deliverables
 
@@ -47,13 +49,22 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 | `cargo fmt --all --manifest-path packages/contracts/Cargo.toml -- --check` | clean |
 | `pnpm contracts:build` | **16/16 WASM artifacts** (20–41 KB) |
 | `pnpm typecheck` | **22/22 tasks** pass |
-| `pnpm test` | **52 passed, 2 skipped**, 22/22 tasks (shared 10, database 4, api 10, sdk 11, indexer 7, e2e 10; live-API tests skip without `WPAY_E2E_API_URL`) |
-| `pnpm lint` | 15/15 tasks, 0 errors, 1 warning (`@wpay/hooks` unused declaration) |
+| `pnpm test` | **188 passed, 2 skipped** (api 130, indexer 23, sdk 11, shared 10, e2e 10, database 4) |
+| `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings after removing an unused declaration |
 | `pnpm build` | 15/15 tasks: api, indexer, web, merchant, admin, mobile, extension |
 | `prisma validate` / `generate` | pass |
+| API coverage | 89.23% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57% |
+| `node scripts/deploy-testnet.cjs` | 16/16 contracts deployed; upload/create txs `SUCCESS`; WASM hashes 16/16 |
+| `node scripts/e2e-testnet.cjs` | payment 1 `Settled`; balances and event verified |
+| API confirmation against Testnet | invoice PAID, payment SETTLED, contractPaymentId 1; bogus/mismatched hashes rejected |
+| `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
+| Gitleaks | no leaks in tracked history |
+| Docker API image | built; container `/v1/health` returns `database: "up"` |
+| Helm / kubeconform / Prometheus / Alertmanager | lint, template and schema/config checks pass |
+| `scripts/db-restore-drill.sh` | restored row counts match source for core tables |
 
-Not run: Docker image builds, Helm template/lint, Kubernetes apply, live-network
-tests, browser interaction tests, load tests.
+Not run: Kubernetes apply against a live cluster, browser interaction tests with
+Freighter, chaos/incident timing drills, and any mainnet activity.
 
 ## 3. Features
 
@@ -64,10 +75,15 @@ subscription flows; HMAC webhooks with retries; indexer projection; three web
 apps with real API calls; mobile PWA invoice lookup; extension lookup/copy;
 SDK; Docker/Helm/K8s/monitoring/CI scaffolding.
 
-Partial: refund approval is recorded but on-chain execution waits for the
-indexed contract refund id; mobile/extension are read-only; rate limiting and
-challenge storage are process-local; monitoring assumes metrics names emitted
-by the API/indexer (dashboards not validated against a live scrape).
+Fixed during gap closure: refund approval builds the contract call once the
+indexer links the contract refund id; Redis rate limiting with an explicit
+in-memory fallback; DB-backed single-use wallet challenges; webhook SSRF guard;
+DB-backed API integration tests; Testnet deployment and E2E payment; k6 load
+test; automated backup plus restore drill.
+
+Partial: mobile/extension are read-only; the hosted frontends still have no
+hosted API; monitoring configs validate but dashboards were not checked against
+a live scrape; browser wallet interaction is not covered by CI.
 
 ## 4. Security findings
 
@@ -77,31 +93,45 @@ masked by `mock_all_auths`); `config.contractEnvVar` generated
 `CONTRACTPAYMENT_ROUTER_ID`, so no contract id could ever be loaded — corrected
 to `CONTRACT_*_ID` and covered by an e2e test that cross-checks `.env.example`.
 
-Open, documented in `docs/AUDIT.md`: webhook SSRF (high), centralized admin keys
-(high), unaudited contracts handling funds (high), per-replica rate limiting,
-process-local challenge store, JWT in `localStorage`, broad extension host
-permissions, untested read-only-root container hardening.
+Fixed during gap closure: webhook SSRF (DNS + private/reserved address blocking
+at registration and delivery), per-replica rate limiting (Redis store), and the
+challenge store (previously process-local; now persisted in the `WalletNonce`
+table and verifiable from any replica).
 
-No secret scanning or Trivy result was produced locally; those checks are
-configured in `security.yml` and have not run on this checkout.
+Open, documented in `docs/AUDIT.md`: centralized admin keys (the Testnet
+deployer is a throwaway single key), unaudited contracts handling funds, JWT in
+`localStorage`, broad extension host permissions, and container hardening not
+exercised beyond a build/health smoke test.
+
+Locally executed: Gitleaks (no leaks) and `pnpm audit --prod --audit-level=high`
+(no known production advisories after zod 4 and transitive overrides). Trivy,
+CodeQL and dependency review are configured in `security.yml`; no remote CI run
+is recorded in this workspace. Docker builds add provenance/SBOM and the deploy
+workflow signs images with cosign keyless OIDC and verifies signatures.
 
 ## 5. Deployment status
 
-**Only the three frontends are deployed** (Vercel team `w-pay`): checkout
-<https://wpay-web.vercel.app>, merchant <https://wpay-merchant.vercel.app>,
-admin <https://wpay-admin.vercel.app> — each verified HTTP 200 on 2026-11-12.
-They are static hosting and cannot process payments because no API, Postgres,
-indexer or contract is deployed; invoice lookup and logins in the live pages
-therefore fail.
-`DEPLOYMENTS.md` records this precisely, including that the API responds with
-"not configured" when contract ids are unset rather than simulating success.
+**Contracts: Testnet.** All 16 contracts are deployed (ids, upload/create txs
+and WASM hashes in `DEPLOYMENTS.md`), and payment 1 settled through
+`PaymentRouter` with exact fee/net balances and event contents verified. The
+API confirmed the transaction into Postgres (`SETTLED`, `contractPaymentId=1`)
+and rejected a bogus hash and a mismatched amount.
+
+**Backend: not hosted.** API, Postgres and indexer run locally/compose only.
+The API container builds and passes a health smoke test. The three Vercel
+frontends (checkout <https://wpay-web.vercel.app>, merchant
+<https://wpay-merchant.vercel.app>, admin <https://wpay-admin.vercel.app>) are
+static hosting and cannot process payments until the backend is hosted.
+
+`DEPLOYMENTS.md` records the deployment precisely. No mainnet deployment and no
+external audit exists.
 
 ## 6. Remaining gaps
 
-1. Independent audit and testnet deployment with verified ids.
-2. Refund id linkage and indexer-driven settlement reconciliation.
-3. Shared rate limiting/challenge storage; webhook SSRF defence.
-4. Postgres-backed integration tests and browser E2E.
-5. Load, backup-restore and incident drills.
-6. CI has never executed on this repository (no remote run); the workflow files
-   are unvalidated by a real CI run.
+1. Independent audit before mainnet; multisig/timelock key ceremony.
+2. Hosted API/indexer/Postgres and pointing the Vercel dashboards at them.
+3. Playwright browser E2E, including Freighter interaction.
+4. PITR/off-site encrypted backups (logical dump + restore drill is automated).
+5. Settlement batch worker and full reconciliation report.
+6. Remote CI execution has not been observed from this workspace; workflows,
+   manifests and charts were validated locally.

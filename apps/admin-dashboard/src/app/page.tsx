@@ -17,6 +17,7 @@ import {
   statusTone,
 } from "@wpay/ui";
 import { useSession, type SessionUser } from "@wpay/hooks";
+import { freighterAddress, signWithFreighter } from "@wpay/hooks";
 
 interface AdminMerchant {
   id: string;
@@ -36,6 +37,8 @@ export default function AdminDashboard(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [intent, setIntent] = useState<TransactionIntent | null>(null);
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [signing, setSigning] = useState(false);
 
   const load = useCallback(async () => {
     if (!session.token) return;
@@ -86,6 +89,41 @@ export default function AdminDashboard(): React.ReactElement {
       setNotice(`Emergency ${action} transaction built. Sign it with an admin wallet to apply.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `${action} failed`);
+    }
+  }
+
+  async function connect(): Promise<void> {
+    try {
+      setWallet(await freighterAddress());
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "could not connect wallet");
+    }
+  }
+
+  async function signAndSubmit(): Promise<void> {
+    if (!intent) return;
+    setSigning(true);
+    setError(null);
+    try {
+      const address = wallet ?? (await freighterAddress());
+      setWallet(address);
+      const signedXdr = await signWithFreighter(intent.xdr, intent.networkPassphrase, address);
+      const submitted = await session.api.raw<{ hash: string; status: string }>(
+        "POST",
+        "/v1/transactions/submit",
+        { xdr: signedXdr },
+      );
+      if (submitted.status !== "SUCCESS") {
+        throw new Error(`transaction ${submitted.status.toLowerCase()} (${submitted.hash})`);
+      }
+      setNotice(`Transaction confirmed on chain: ${submitted.hash}`);
+      setIntent(null);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "signing failed");
+    } finally {
+      setSigning(false);
     }
   }
 
@@ -148,6 +186,20 @@ export default function AdminDashboard(): React.ReactElement {
               Open this XDR in a Stellar wallet or signer with the required admin/operator key.
               The API never signs or submits admin actions on its own.
             </p>
+            <div className="wp-row" style={{ marginTop: 12 }}>
+              {wallet ? (
+                <span className="wp-mono">
+                  Wallet {wallet.slice(0, 8)}…{wallet.slice(-6)}
+                </span>
+              ) : (
+                <Button variant="secondary" onClick={() => void connect()}>
+                  Connect wallet
+                </Button>
+              )}
+              <Button onClick={() => void signAndSubmit()} loading={signing}>
+                Sign &amp; submit
+              </Button>
+            </div>
           </Card>
         ) : null}
 

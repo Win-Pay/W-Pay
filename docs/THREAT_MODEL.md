@@ -23,7 +23,7 @@
 
 | Threat | Impact | Mitigation | Status |
 | --- | --- | --- | --- |
-| Forged payment confirmation | Merchant ships goods unpaid | `confirm` verifies the transaction result on-chain; indexer reconciles from events | Implemented; not exercised on a live network |
+| Forged payment confirmation | Merchant ships goods unpaid | `confirm` verifies the transaction result on-chain; indexer reconciles from events | Implemented; exercised on Testnet (one settled payment, bogus hash and mismatched amount rejected) |
 | Replay of signed transaction | Double spend | Stellar sequence numbers + contract idempotency per payment id | Implemented |
 | Unauthorized refund | Funds drained to attacker | Refund approval requires merchant settlement address; amount capped at gross | Implemented + tested |
 | Fee manipulation | Merchant overcharged | Fee cap enforced in fee manager and router; admin-only writes; events emitted | Implemented + tested |
@@ -31,10 +31,10 @@
 | Pause abuse | Denial of service | Pause requires authority/admin; unpause event logged | Implemented |
 | API key leak | Scoped data/payment access | Hashed at rest, prefix lookup, scopes, revocable | Implemented |
 | JWT theft via XSS | Account takeover | Short expiry; CSP/helmet; no tokens in URLs | Partially mitigated; tokens in localStorage |
-| Webhook SSRF | Internal network access | Merchant-supplied URLs fetched by worker | **Not mitigated** — add allowlist/private-IP blocking before production |
+| Webhook SSRF | Internal network access | Merchant-supplied URLs fetched by worker | Mitigated: `url-guard.ts` blocks private/reserved IPv4/IPv6, local names and redirects at registration and delivery |
 | Webhook forgery | Fake payment events | HMAC-SHA256 over timestamp + body, constant-time compare | Implemented |
-| Challenge replay | Session hijack | Single-use, expiring challenge bound to domain | Implemented; store is process-local |
-| Rate-limit bypass | DoS/brute force | Per-IP limiter | In-process only — bypassable across replicas |
+| Challenge replay | Session hijack | Single-use, expiring challenge bound to domain | Implemented; challenges persist in the `WalletNonce` table, so any replica can verify |
+| Rate-limit bypass | DoS/brute force | Per-IP limiter | Redis-backed when `REDIS_URL` is set; per-process fallback otherwise (quota multiplies per replica) |
 | Indexer poisoning | False state | Only contract events for configured ids are accepted; upserts idempotent | Implemented |
 | Supply chain | Backdoor | Lockfile, pnpm build allow-list, CodeQL, Trivy, gitleaks, dependency review | Configured in CI |
 | Admin key compromise | Full control | Recommend multisig, delayed upgrade, pause | Process control, not code |
@@ -59,6 +59,7 @@
 
 ## Residual risks
 
-Unaudited contracts, centralized admin powers, no live-network testing, and no
-operational track record. Do not handle real value without an independent audit
-and a staged rollout.
+Unaudited contracts, centralized admin powers, and no operational track record.
+Testing is limited to the Soroban host and a single Testnet deployment; there is
+no mainnet, load, failover or browser-wallet test result. Do not handle real
+value without an independent audit and a staged rollout.

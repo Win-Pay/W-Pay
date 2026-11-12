@@ -1,7 +1,14 @@
 import { rpc } from "@stellar/stellar-sdk";
 import type { ContractName } from "@wpay/config";
 import { Prisma, type PrismaClient } from "@wpay/database";
-import { decodeEvent, eventPayload, planPaymentUpdate, type RawEvent } from "./decode";
+import {
+  decodeEvent,
+  eventPayload,
+  planEvent,
+  type DecodedEvent,
+  type Projection,
+  type RawEvent,
+} from "./decode";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -19,12 +26,20 @@ export interface IngestResult {
   lastLedger: number;
 }
 
+export interface ReconcileResult {
+  indexedEvents: number;
+  settledPayments: number;
+  linkedPayments: number;
+  pendingPayments: number;
+}
+
 /**
  * Ingests Soroban contract events into Postgres.
  *
- * Idempotency: (contractId, txHash, eventIndex) is unique, so replaying a ledger
- * range never double-writes. The checkpoint only advances after the whole batch
- * is committed, which makes a crash re-process at most one batch.
+ * Each event is persisted and projected inside one transaction, so a crash can
+ * never leave an event recorded without its domain update (or vice versa).
+ * Idempotency comes from the unique (contractId, txHash, eventIndex) index: a
+ * replay aborts that transaction and is counted as skipped.
  */
 export class Indexer {
   private readonly server: rpc.Server;
@@ -49,7 +64,7 @@ export class Indexer {
     return results;
   }
 
-  async ingestContract(_name: ContractName, contractId: string): Promise<IngestResult> {
+  async ingestContract(name: ContractName, contractId: string): Promise<IngestResult> {
     const checkpoint = await this.prisma.indexerCheckpoint.findUnique({
       where: { contractId },
     });
@@ -72,32 +87,34 @@ export class Indexer {
 
     for (let index = 0; index < events.length; index += 1) {
       const event = events[index]!;
-      // The RPC node gives ids as a paging token; combine it with the batch
-      // position so each event is unique even within one ledger.
-      const eventIndex = hashToken(event.pagingToken ?? `${event.ledger}:${index}`);
+      const eventIndex = event.id ?? `${event.txHash}:${index}`;
       const raw: RawEvent = {
         contractId,
         ledger: event.ledger,
         txHash: event.txHash,
         topics: event.topic,
         value: event.value,
-        pagingToken: event.pagingToken,
+        pagingToken: event.id,
       };
       const decoded = decodeEvent(raw);
+      const projection = planEvent(name, decoded);
 
       try {
-        await this.prisma.indexedEvent.create({
-          data: {
-            contractId,
-            ledger: event.ledger,
-            txHash: event.txHash,
-            eventIndex,
-            kind: decoded.kind,
-            payload: eventPayload(decoded) as Prisma.InputJsonValue,
-          },
+        const didApply = await this.prisma.$transaction(async (tx) => {
+          await tx.indexedEvent.create({
+            data: {
+              contractId,
+              ledger: event.ledger,
+              txHash: event.txHash,
+              eventIndex,
+              kind: decoded.kind,
+              payload: eventPayload(decoded) as Prisma.InputJsonValue,
+            },
+          });
+          return projection ? await applyProjection(tx, projection) : false;
         });
         inserted += 1;
-        if (await this.applyPayment(decoded)) applied += 1;
+        if (didApply) applied += 1;
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
           skipped += 1;
@@ -108,7 +125,17 @@ export class Indexer {
       lastLedger = Math.max(lastLedger, event.ledger);
     }
 
-    if (events.length > 0) {
+    // When the batch was not full, the node has reached its latest ledger and we
+    // can safely checkpoint past empty ranges. A full batch may contain more
+    // events in the same ledger, so keep the last processed ledger instead.
+    const latestLedger =
+      events.length < this.options.batchSize && typeof response.latestLedger === "number"
+        ? response.latestLedger
+        : lastLedger;
+    lastLedger = Math.max(lastLedger, latestLedger);
+
+    const checkpointBefore = checkpoint?.lastLedger ?? this.options.startLedger;
+    if (events.length > 0 || lastLedger > checkpointBefore) {
       await this.prisma.indexerCheckpoint.upsert({
         where: { contractId },
         create: { contractId, lastLedger },
@@ -117,51 +144,443 @@ export class Indexer {
     }
 
     if (inserted > 0 || skipped > 0) {
-      this.log(`${contractId}: fetched=${events.length} inserted=${inserted} skipped=${skipped}`);
+      this.log(
+        `${contractId}: fetched=${events.length} inserted=${inserted} skipped=${skipped} applied=${applied}`,
+      );
     }
     return { fetched: events.length, inserted, skipped, applied, lastLedger };
   }
 
-  /** Applies the payment event to the operational payment row, if it exists. */
-  private async applyPayment(event: ReturnType<typeof decodeEvent>): Promise<boolean> {
-    const update = planPaymentUpdate(event);
-    if (!update) return false;
-    const existing = await this.prisma.payment.findFirst({
-      where: {
-        OR: [
-          { contractPaymentId: BigInt(update.contractPaymentId) },
-          { txHash: update.txHash },
-        ],
-      },
-    });
-    if (!existing) return false;
-    if (existing.status === "SETTLED") return false;
-    await this.prisma.payment.update({
-      where: { id: existing.id },
-      data: {
-        status: "SETTLED",
-        txHash: update.txHash,
-        ledger: update.ledger,
-        contractPaymentId: BigInt(update.contractPaymentId),
-        settledAt: new Date(),
-      },
-    });
-    return true;
-  }
-
-  /** Compares indexed totals with the payment ledger for one merchant. */
-  async reconcile(merchantId: string): Promise<{ indexedEvents: number; settledPayments: number }> {
-    const [indexedEvents, settledPayments] = await Promise.all([
-      this.prisma.indexedEvent.count({
-        where: { kind: "payment", payload: { path: ["topics"], equals: Prisma.JsonNull } },
-      }),
+  /** Compares indexed totals with the operational ledger for one merchant. */
+  async reconcile(merchantId: string): Promise<ReconcileResult> {
+    const [indexedEvents, settledPayments, linkedPayments, pendingPayments] = await Promise.all([
+      this.prisma.indexedEvent.count({ where: { kind: "payment" } }),
       this.prisma.payment.count({ where: { merchantId, status: "SETTLED" } }),
+      this.prisma.payment.count({
+        where: { merchantId, contractPaymentId: { not: null } },
+      }),
+      this.prisma.payment.count({ where: { merchantId, status: "PENDING" } }),
     ]);
-    return { indexedEvents, settledPayments };
+    return { indexedEvents, settledPayments, linkedPayments, pendingPayments };
   }
 }
 
-/** Stable 31-bit-ish integer from a paging token, used as the unique index. */
+function single<T>(rows: T[]): T | null {
+  return rows.length === 1 ? rows[0]! : null;
+}
+
+async function applyPaymentSettled(
+  tx: Prisma.TransactionClient,
+  p: Extract<Projection, { type: "payment.settled" }>,
+): Promise<boolean> {
+  if (!p.amount) return false;
+  const amount = BigInt(p.amount);
+  const contractPaymentId = BigInt(p.contractPaymentId);
+  const merchant = p.contractMerchantId
+    ? await tx.merchant.findFirst({ where: { registryId: BigInt(p.contractMerchantId) } })
+    : null;
+
+  let payment = await tx.payment.findFirst({
+    where: { OR: [{ contractPaymentId }, { txHash: p.txHash }] },
+  });
+
+  if (!payment) {
+    const candidates = await tx.payment.findMany({
+      where: {
+        status: "PENDING",
+        txHash: null,
+        amount,
+        ...(p.payer ? { payerAddress: p.payer } : {}),
+        ...(merchant ? { merchantId: merchant.id } : {}),
+      },
+      take: 2,
+      orderBy: { createdAt: "asc" },
+    });
+    payment = single(candidates);
+  }
+  if (!payment) return false;
+  if (payment.amount !== amount) return false;
+  if (p.payer && payment.payerAddress !== p.payer) return false;
+
+  // A settled payment must never be re-pointed at a different transaction.
+  if (payment.status === "SETTLED") return false;
+
+  const alreadyLinked = await tx.payment.findUnique({ where: { contractPaymentId } });
+  if (alreadyLinked && alreadyLinked.id !== payment.id) return false;
+
+  const fee = p.fee ? BigInt(p.fee) : payment.fee;
+  payment = await tx.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: "SETTLED",
+      txHash: p.txHash,
+      ledger: p.ledger,
+      contractPaymentId,
+      contractMerchantId: p.contractMerchantId
+        ? BigInt(p.contractMerchantId)
+        : payment.contractMerchantId,
+      fee,
+      net: amount - fee,
+      settledAt: payment.settledAt ?? new Date(),
+    },
+  });
+
+  if (payment.memo) {
+    await tx.invoice.updateMany({
+      where: { number: payment.memo, paymentId: null },
+      data: {
+        status: "PAID",
+        paidAt: new Date(),
+        paymentId: payment.id,
+        contractPaymentId,
+        txHash: p.txHash,
+      },
+    });
+  }
+  await tx.invoice.updateMany({
+    where: { contractPaymentId, paymentId: null },
+    data: {
+      status: "PAID",
+      paidAt: new Date(),
+      paymentId: payment.id,
+      txHash: p.txHash,
+    },
+  });
+  return true;
+}
+
+export async function applyProjection(
+  tx: Prisma.TransactionClient,
+  projection: Projection,
+): Promise<boolean> {
+  switch (projection.type) {
+    case "payment.settled":
+      return applyPaymentSettled(tx, projection);
+
+    case "payment.refunded": {
+      const payment = await tx.payment.findUnique({
+        where: { contractPaymentId: BigInt(projection.contractPaymentId) },
+      });
+      if (!payment) return false;
+      const refunded = BigInt(projection.refunded);
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          refunded,
+          status: refunded >= payment.amount ? "REFUNDED" : "PARTIALLY_REFUNDED",
+        },
+      });
+      return true;
+    }
+
+    case "refund.requested": {
+      const payment = await tx.payment.findUnique({
+        where: { contractPaymentId: BigInt(projection.contractPaymentId) },
+      });
+      if (!payment) return false;
+      const refund = single(
+        await tx.refund.findMany({
+          where: {
+            paymentId: payment.id,
+            status: "PENDING",
+            contractRefundId: null,
+            ...(projection.amount ? { amount: BigInt(projection.amount) } : {}),
+          },
+          take: 2,
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      if (!refund) return false;
+      await tx.refund.update({
+        where: { id: refund.id },
+        data: {
+          contractRefundId: BigInt(projection.contractRefundId),
+          txHash: projection.txHash,
+        },
+      });
+      return true;
+    }
+
+    case "refund.approved":
+    case "refund.rejected": {
+      const result = await tx.refund.updateMany({
+        where: { contractRefundId: BigInt(projection.contractRefundId) },
+        data: {
+          status: projection.type === "refund.approved" ? "APPROVED" : "REJECTED",
+          txHash: projection.txHash,
+          decidedAt: new Date(),
+        },
+      });
+      return result.count > 0;
+    }
+
+    case "escrow.created": {
+      if (!projection.payer || !projection.payee || !projection.amount) return false;
+      const escrow = single(
+        await tx.escrow.findMany({
+          where: {
+            payerAddress: projection.payer,
+            payeeAddress: projection.payee,
+            amount: BigInt(projection.amount),
+            status: "CREATED",
+            contractEscrowId: null,
+          },
+          take: 2,
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      if (!escrow) return false;
+      await tx.escrow.update({
+        where: { id: escrow.id },
+        data: {
+          contractEscrowId: BigInt(projection.contractEscrowId),
+          txHash: projection.txHash,
+          status: "FUNDED",
+        },
+      });
+      return true;
+    }
+
+    case "escrow.status": {
+      const result = await tx.escrow.updateMany({
+        where: { contractEscrowId: BigInt(projection.contractEscrowId) },
+        data: { status: projection.status, txHash: projection.txHash },
+      });
+      return result.count > 0;
+    }
+
+    case "invoice.created": {
+      if (!projection.contractMerchantId || !projection.amount) return false;
+      const merchant = await tx.merchant.findFirst({
+        where: { registryId: BigInt(projection.contractMerchantId) },
+      });
+      if (!merchant) return false;
+      const invoice = single(
+        await tx.invoice.findMany({
+          where: {
+            merchantId: merchant.id,
+            amount: BigInt(projection.amount),
+            status: "OPEN",
+            contractInvoiceId: null,
+          },
+          take: 2,
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      if (!invoice) return false;
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          contractInvoiceId: BigInt(projection.contractInvoiceId),
+          txHash: projection.txHash,
+        },
+      });
+      return true;
+    }
+
+    case "invoice.paid": {
+      const contractInvoiceId = BigInt(projection.contractInvoiceId);
+      const invoice = await tx.invoice.findUnique({ where: { contractInvoiceId } });
+      if (!invoice) return false;
+      let paymentId = invoice.paymentId;
+      if (projection.contractPaymentId) {
+        const payment = await tx.payment.findUnique({
+          where: { contractPaymentId: BigInt(projection.contractPaymentId) },
+        });
+        if (payment) paymentId = payment.id;
+      }
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          status: "PAID",
+          paidAt: invoice.paidAt ?? new Date(),
+          paymentId,
+          txHash: projection.txHash,
+          contractPaymentId: projection.contractPaymentId
+            ? BigInt(projection.contractPaymentId)
+            : invoice.contractPaymentId,
+        },
+      });
+      return true;
+    }
+
+    case "invoice.status": {
+      const result = await tx.invoice.updateMany({
+        where: { contractInvoiceId: BigInt(projection.contractInvoiceId) },
+        data: { status: projection.status, txHash: projection.txHash },
+      });
+      return result.count > 0;
+    }
+
+    case "plan.created": {
+      if (!projection.contractMerchantId || !projection.amount) return false;
+      const merchant = await tx.merchant.findFirst({
+        where: { registryId: BigInt(projection.contractMerchantId) },
+      });
+      if (!merchant) return false;
+      const plan = single(
+        await tx.subscriptionPlan.findMany({
+          where: {
+            merchantId: merchant.id,
+            amount: BigInt(projection.amount),
+            planIdOnChain: null,
+          },
+          take: 2,
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      if (!plan) return false;
+      await tx.subscriptionPlan.update({
+        where: { id: plan.id },
+        data: { planIdOnChain: BigInt(projection.planIdOnChain) },
+      });
+      return true;
+    }
+
+    case "plan.active": {
+      const result = await tx.subscriptionPlan.updateMany({
+        where: { planIdOnChain: BigInt(projection.planIdOnChain) },
+        data: { active: projection.active },
+      });
+      return result.count > 0;
+    }
+
+    case "subscription.created": {
+      const plan = await tx.subscriptionPlan.findUnique({
+        where: { planIdOnChain: BigInt(projection.planIdOnChain) },
+      });
+      if (!plan || !projection.subscriber) return false;
+      const subscription = await tx.subscription.findUnique({
+        where: { planId_subscriber: { planId: plan.id, subscriber: projection.subscriber } },
+      });
+      if (!subscription) return false;
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          contractSubId: BigInt(projection.contractSubId),
+          txHash: projection.txHash,
+          status: "ACTIVE",
+          nextDueAt: new Date(Date.now() + plan.intervalSecs * 1000),
+        },
+      });
+      return true;
+    }
+
+    case "subscription.charged": {
+      const contractSubId = BigInt(projection.contractSubId);
+      const subscription = await tx.subscription.findUnique({
+        where: { contractSubId },
+      });
+      if (!subscription) return false;
+      const plan = await tx.subscriptionPlan.findUnique({
+        where: { id: subscription.planId },
+      });
+      const prepaid = subscription.prepaid - BigInt(projection.amount);
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          cyclesCharged: subscription.cyclesCharged + Number(projection.cyclesCharged),
+          prepaid: prepaid > 0n ? prepaid : 0n,
+          nextDueAt: new Date(
+            subscription.nextDueAt.getTime() + (plan?.intervalSecs ?? 0) * 1000,
+          ),
+          txHash: projection.txHash,
+        },
+      });
+      return true;
+    }
+
+    case "subscription.cancelled": {
+      const result = await tx.subscription.updateMany({
+        where: { contractSubId: BigInt(projection.contractSubId) },
+        data: { status: "CANCELLED", prepaid: 0n, txHash: projection.txHash },
+      });
+      return result.count > 0;
+    }
+
+    case "settlement.opened": {
+      if (!projection.token || projection.periodStart === undefined || projection.periodEnd === undefined) {
+        return false;
+      }
+      const window = single(
+        await tx.settlementWindow.findMany({
+          where: {
+            token: projection.token,
+            periodStart: new Date(projection.periodStart * 1000),
+            periodEnd: new Date(projection.periodEnd * 1000),
+            windowIdOnChain: null,
+          },
+          take: 2,
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      if (!window) return false;
+      await tx.settlementWindow.update({
+        where: { id: window.id },
+        data: {
+          windowIdOnChain: BigInt(projection.windowIdOnChain),
+          txHash: projection.txHash,
+        },
+      });
+      return true;
+    }
+
+    case "settlement.closed": {
+      const result = await tx.settlementWindow.updateMany({
+        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        data: { status: "CLOSED", total: BigInt(projection.total), txHash: projection.txHash },
+      });
+      return result.count > 0;
+    }
+
+    case "settlement.executed": {
+      const result = await tx.settlementWindow.updateMany({
+        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        data: {
+          status: "EXECUTED",
+          total: BigInt(projection.total),
+          executedAt: new Date(),
+          txHash: projection.txHash,
+        },
+      });
+      return result.count > 0;
+    }
+
+    case "settlement.cancelled": {
+      const result = await tx.settlementWindow.updateMany({
+        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        data: { status: "CANCELLED", txHash: projection.txHash },
+      });
+      return result.count > 0;
+    }
+
+    case "merchant.registered": {
+      const result = await tx.merchant.updateMany({
+        where: { ownerAddress: projection.owner, registryId: null },
+        data: { registryId: BigInt(projection.registryId) },
+      });
+      return result.count > 0;
+    }
+
+    case "merchant.status": {
+      const result = await tx.merchant.updateMany({
+        where: { registryId: BigInt(projection.registryId) },
+        data: { status: projection.status },
+      });
+      return result.count > 0;
+    }
+
+    case "merchant.settlement": {
+      const result = await tx.merchant.updateMany({
+        where: { registryId: BigInt(projection.registryId) },
+        data: { settlementAddress: projection.settlement },
+      });
+      return result.count > 0;
+    }
+  }
+}
+
+/** Stable 31-bit-ish integer from a paging token, retained for compatibility. */
 export function hashToken(token: string): number {
   let hash = 0;
   for (let i = 0; i < token.length; i += 1) {

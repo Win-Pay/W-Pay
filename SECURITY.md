@@ -24,14 +24,25 @@ infrastructure you operate without following this repository's guidance.
 - API keys are hashed (SHA-256) and scoped; JWTs are short-lived.
 - Webhooks are HMAC-signed with timestamped bodies.
 - Health and metrics endpoints are public but expose no secrets.
-- No contract has been audited or deployed. Treat the code as unaudited.
+- Webhook URLs are resolved and blocked if they point at private/reserved
+  addresses; redirects are refused. Registration and delivery both check.
+- Rate limits use Redis when `REDIS_URL` is set; otherwise the API warns and
+  falls back to per-process counters.
+- No contract has been independently audited. The 16 contracts are deployed on
+  **Testnet only**, under a throwaway deployer key with no real funds.
 
 ## Known issues and accepted risks
 
 See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and the findings section of
 [docs/AUDIT.md](docs/AUDIT.md), including:
 
-- in-process rate limiting (per replica, not global);
-- no replay cache for wallet challenges beyond expiry/single-use storage;
+- per-replica rate limiting when Redis is not configured;
+- wallet challenges are single-use and expiry-bound in Postgres, but there is no
+  additional replay cache;
 - contract admin keys are powerful (fee cap, pause, upgrade proposals);
-- no external audit, no formal verification.
+- JWT tokens are stored in `localStorage` in the dashboards;
+- the browser extension requests broad host permissions;
+- no external audit, no formal verification, no mainnet deployment;
+- `cargo audit` reports RUSTSEC-2026-0387 in `crypto-bigint` 0.5.5, reached via
+  `soroban-env-host` 29.0.1. There is no compatible patched release yet; CI
+  ignores it explicitly and it is re-checked on SDK upgrades.

@@ -148,6 +148,11 @@ export const ConfirmPaymentSchema = z.object({
 });
 export type ConfirmPaymentInput = z.infer<typeof ConfirmPaymentSchema>;
 
+export const PayInvoiceIntentSchema = z.object({
+  payer: StellarAddressSchema,
+});
+export type PayInvoiceIntentInput = z.infer<typeof PayInvoiceIntentSchema>;
+
 export const CreateInvoiceSchema = z.object({
   merchantId: z.string().min(1),
   token: StellarAddressSchema,
@@ -245,6 +250,9 @@ export interface InvoiceRecord {
   dueAt: string;
   paidAt: string | null;
   paymentId: string | null;
+  contractInvoiceId: string | null;
+  contractPaymentId: string | null;
+  txHash: string | null;
   customerEmail: string | null;
   createdAt: string;
 }
@@ -271,6 +279,8 @@ export interface RefundRecord {
   amount: string;
   reason: string;
   status: RefundStatus;
+  contractRefundId: string | null;
+  txHash: string | null;
   createdAt: string;
   decidedAt: string | null;
 }
@@ -318,4 +328,6 @@ export interface TransactionIntent {
   contractId: string;
   method: string;
   description: string;
+  /** Set when the intent is tied to a pending database row (e.g. an invoice). */
+  paymentId?: string;
 }

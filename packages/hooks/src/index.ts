@@ -62,7 +62,6 @@ export function usePolling(callback: () => void, intervalMs: number, enabled = t
   }, [intervalMs, enabled]);
 }
 
-const API_URL_KEY = "wpay.apiUrl";
 const TOKEN_KEY = "wpay.token";
 
 export interface SessionUser {
@@ -134,6 +133,51 @@ export interface WalletState {
   signer: WalletSigner | null;
   connect: (address: string, signer: WalletSigner) => void;
   disconnect: () => void;
+}
+
+/** Minimal surface of the injected Freighter extension. */
+export interface FreighterLike {
+  getPublicKey?: () => Promise<string>;
+  getAddress?: () => Promise<{ address: string } | string>;
+  signTransaction: (
+    xdr: string,
+    options: { networkPassphrase: string; address?: string },
+  ) => Promise<{ signedTxXdr: string }>;
+}
+
+/** Returns the injected Freighter API, if the extension is installed. */
+export function freighterApi(): FreighterLike | null {
+  if (typeof window === "undefined") return null;
+  const candidate = (window as unknown as Record<string, unknown>).freighterApi ??
+    (window as unknown as Record<string, unknown>).freighter;
+  return (candidate as FreighterLike) ?? null;
+}
+
+/** Asks Freighter for the active account address. */
+export async function freighterAddress(): Promise<string> {
+  const wallet = freighterApi();
+  if (!wallet) {
+    throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
+  }
+  const value = wallet.getAddress
+    ? await wallet.getAddress().then((result) => (typeof result === "string" ? result : result.address))
+    : await wallet.getPublicKey?.();
+  if (!value) throw new Error("wallet did not return an address");
+  return value;
+}
+
+/** Signs an unsigned XDR with Freighter and returns the signed envelope. */
+export async function signWithFreighter(
+  xdr: string,
+  networkPassphrase: string,
+  address?: string,
+): Promise<string> {
+  const wallet = freighterApi();
+  if (!wallet) {
+    throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
+  }
+  const signed = await wallet.signTransaction(xdr, { networkPassphrase, address });
+  return signed.signedTxXdr;
 }
 
 export function useWallet(): WalletState {

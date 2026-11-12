@@ -9,14 +9,21 @@
 | Region loss | < 4 h | ≤ 5 min |
 | Compromised key | < 1 h to containment | — |
 
-These are targets, not measured results; no drill has been run in this
-repository.
+These are targets, not measured results. The logical restore drill has been
+executed in CI and locally (row counts matched); RTO/RPO and failover have not
+been measured.
 
 ## Backups
 
-- Managed Postgres continuous WAL archiving + daily snapshots, 30-day retention.
-- Weekly restore into an isolated environment; verify row counts for
-  `Payment`, `Merchant`, `WebhookDelivery` and the latest migration.
+- `.github/workflows/backup.yml` takes a daily custom-format `pg_dump` of the
+  production database (`DATABASE_URL` secret), records a row-count manifest and
+  uploads both as a 30-day artifact.
+- The same workflow restores the dump into an ephemeral Postgres and compares
+  every count with the manifest, then exercises
+  `scripts/db-backup.sh`/`scripts/db-restore-drill.sh` against a freshly
+  migrated and seeded database.
+- This is logical backup only. Managed Postgres continuous WAL archiving/PITR is
+  still required in production and is not configured by this repository.
 - Contract state does **not** need a backup: it is on the ledger. What matters is
   the ability to rebuild the projection from events.
 
@@ -59,5 +66,8 @@ Never state that funds are safe without verifying contract balances.
 
 ## Gaps
 
-- No automated failover, backup verification or chaos testing is configured here.
+- No automated failover or chaos testing is configured here.
+- No PITR/WAL archiving automation, off-site replication or encryption of backup
+  artifacts is configured; the workflow relies on GitHub Actions artifacts.
 - No on-call rotation, runbook ownership or incident tooling is included.
+- RTO/RPO values above are targets and have not been measured.

@@ -18,6 +18,7 @@ import {
   statusTone,
 } from "@wpay/ui";
 import { formatAmount, useSession, type SessionUser } from "@wpay/hooks";
+import { freighterAddress, signWithFreighter } from "@wpay/hooks";
 
 type Tab = "overview" | "payments" | "invoices" | "refunds";
 
@@ -296,7 +297,7 @@ function Invoices({ merchant }: { merchant: MerchantRecord }): React.ReactElemen
     try {
       const invoice = await api.invoices.create({
         merchantId: merchant.id,
-        token: token || merchant.settlementAddress,
+        token,
         amount,
         memo: memo || undefined,
         dueAt: new Date(Date.now() + Number(days) * 86_400_000),
@@ -329,8 +330,13 @@ function Invoices({ merchant }: { merchant: MerchantRecord }): React.ReactElemen
             <Field label="Amount (stroops)">
               <Input value={amount} onChange={setAmount} placeholder="10000000" required />
             </Field>
-            <Field label="Asset contract (optional)">
-              <Input value={token} onChange={setToken} placeholder="Defaults to settlement address" />
+            <Field label="Asset contract">
+              <Input
+                value={token}
+                onChange={setToken}
+                placeholder="C… token contract id"
+                required
+              />
             </Field>
             <Field label="Due in (days)">
               <Input value={days} onChange={setDays} type="number" min="1" max="365" />
@@ -396,6 +402,11 @@ function Refunds({ merchantId }: { merchantId: string }): React.ReactElement {
   const [items, setItems] = useState<RefundRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [approval, setApproval] = useState<{ xdr: string; networkPassphrase: string } | null>(
+    null,
+  );
+  const [signing, setSigning] = useState(false);
 
   const reload = () =>
     api.refunds
@@ -408,15 +419,53 @@ function Refunds({ merchantId }: { merchantId: string }): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [merchantId]);
 
+  async function signApproval(next: { xdr: string; networkPassphrase: string }): Promise<void> {
+    setSigning(true);
+    setError(null);
+    try {
+      const address = wallet ?? (await freighterAddress());
+      setWallet(address);
+      const signedXdr = await signWithFreighter(next.xdr, next.networkPassphrase, address);
+      const submitted = await api.raw<{ hash: string; status: string }>(
+        "POST",
+        "/v1/transactions/submit",
+        { xdr: signedXdr },
+      );
+      if (submitted.status !== "SUCCESS") {
+        throw new Error(`transaction ${submitted.status.toLowerCase()} (${submitted.hash})`);
+      }
+      setNotice(`Refund approval confirmed on chain: ${submitted.hash}`);
+      setApproval(null);
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "could not sign the approval");
+    } finally {
+      setSigning(false);
+    }
+  }
+
   async function approve(id: string): Promise<void> {
     try {
       const response = await api.refunds.approveIntent(id);
-      setNotice(
-        response.transaction
-          ? "Approval recorded. Sign the transaction with the settlement wallet to move funds."
-          : "Approval recorded. The on-chain refund id is not indexed yet, so no transaction can be signed.",
-      );
       await reload();
+      if (!response.transaction) {
+        setNotice(
+          "Approval recorded. The on-chain refund id is not indexed yet, so no transaction can be signed.",
+        );
+        return;
+      }
+      const next = {
+        xdr: response.transaction.xdr,
+        networkPassphrase: response.transaction.networkPassphrase,
+      };
+      setApproval(next);
+      if (wallet) {
+        await signApproval(next);
+      } else {
+        setNotice(
+          "Approval recorded. Connect the settlement wallet, then sign the approval transaction.",
+        );
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "could not approve refund");
     }
@@ -431,10 +480,35 @@ function Refunds({ merchantId }: { merchantId: string }): React.ReactElement {
     }
   }
 
+  async function connect(): Promise<void> {
+    try {
+      setWallet(await freighterAddress());
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "could not connect wallet");
+    }
+  }
+
   return (
     <Card title="Refund requests">
       {error ? <Alert tone="error">{error}</Alert> : null}
       {notice ? <Alert tone="success">{notice}</Alert> : null}
+      <div className="wp-row" style={{ marginBottom: 12 }}>
+        {wallet ? (
+          <span className="wp-mono">
+            Settlement wallet {wallet.slice(0, 8)}…{wallet.slice(-6)}
+          </span>
+        ) : (
+          <Button small variant="secondary" onClick={() => void connect()}>
+            Connect settlement wallet
+          </Button>
+        )}
+        {approval ? (
+          <Button small loading={signing} onClick={() => void signApproval(approval)}>
+            Sign approval transaction
+          </Button>
+        ) : null}
+      </div>
       {items.length === 0 ? (
         <EmptyState title="No refund requests" />
       ) : (

@@ -1,0 +1,14 @@
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/.turbo
+packages/contracts/target
+.git
+.github
+.env*
+!.env.example
+backups
+deployments/*.json
+*.log
+/tmp

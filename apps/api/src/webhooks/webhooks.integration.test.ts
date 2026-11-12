@@ -36,6 +36,9 @@ describe.skipIf(!hasDatabase)("webhook delivery", () => {
 
   beforeAll(async () => {
     process.env.WEBHOOK_MAX_ATTEMPTS = "2";
+    // The fake merchant endpoint below listens on loopback; the SSRF guard is
+    // exercised separately and by default refuses private targets.
+    process.env.WEBHOOK_ALLOW_PRIVATE_TARGETS = "1";
     ({ prisma } = await import("@wpay/database"));
 
     server = createServer((request, response) => {
@@ -105,6 +108,53 @@ describe.skipIf(!hasDatabase)("webhook delivery", () => {
     });
     return row;
   }
+
+  it("refuses to register an internal webhook target", async () => {
+    const owner = { id: userId, role: "USER" as const, viaApiKey: false };
+    await expect(
+      service.create(owner as never, {
+        merchantId,
+        url: "http://127.0.0.1/hook",
+        events: ["payment.settled"],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      service.create(owner as never, {
+        merchantId,
+        url: "http://169.254.169.254/latest/meta-data",
+        events: ["payment.settled"],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    const stored = await prisma.webhookEndpoint.count({ where: { merchantId } });
+    expect(stored).toBe(0);
+  });
+
+  it("blocks delivery when the stored target is no longer safe", async () => {
+    const target = await prisma.webhookEndpoint.create({
+      data: {
+        merchantId,
+        url: "http://10.0.0.5/hook",
+        secret: `whsec_${run}private`,
+        events: ["payment.settled"],
+        active: true,
+      },
+    });
+    await service.enqueueForMerchant(merchantId, "payment.settled", { paymentId: "ssrf" });
+
+    delete process.env.WEBHOOK_ALLOW_PRIVATE_TARGETS;
+    try {
+      expect(await service.drain()).toBe(0);
+    } finally {
+      process.env.WEBHOOK_ALLOW_PRIVATE_TARGETS = "1";
+    }
+
+    const delivery = await prisma.webhookDelivery.findFirst({ where: { endpointId: target.id } });
+    expect(delivery?.status).toBe("PENDING");
+    expect(delivery?.attempts).toBe(1);
+    expect(delivery?.lastError).toContain("not allowed");
+  });
 
   it("only queues deliveries for endpoints subscribed to the event", async () => {
     const subscribed = await endpoint(["payment.settled"]);

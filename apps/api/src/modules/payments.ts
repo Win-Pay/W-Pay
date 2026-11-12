@@ -23,6 +23,7 @@ import {
 } from "@wpay/types";
 import { clampPageSize, splitAmount } from "@wpay/config";
 import { encodeCursor } from "@wpay/shared";
+import { Prisma } from "@wpay/database";
 import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
@@ -85,71 +86,103 @@ export class PaymentsService {
     input: CreatePaymentInput,
     idempotencyKey?: string,
   ): Promise<{ payment: PaymentRecord; transaction: TransactionIntent | null }> {
-    const merchant = await this.prisma.merchant.findUnique({ where: { id: input.merchantId } });
-    if (!merchant) throw new NotFoundException("merchant not found");
-    requireMerchantAccess(user, merchant);
-    if (merchant.status !== "ACTIVE") {
-      throw new ConflictException("merchant is not active");
-    }
+    const scope = `payment.create:${user.id}`;
+    const requestHash = JSON.stringify(input);
+    let idempotencyId: string | null = null;
 
     if (idempotencyKey) {
-      const replay = await this.prisma.idempotencyKey.findUnique({
-        where: { scope_key: { scope: "payment.create", key: idempotencyKey } },
+      const existing = await this.prisma.idempotencyKey.findUnique({
+        where: { scope_key: { scope, key: idempotencyKey } },
       });
-      if (replay?.response) {
-        return replay.response as unknown as {
-          payment: PaymentRecord;
-          transaction: TransactionIntent | null;
-        };
+      if (existing) {
+        if (existing.requestHash !== requestHash) {
+          throw new ConflictException(
+            "idempotency key was already used for a different request body",
+          );
+        }
+        if (existing.response) {
+          return existing.response as unknown as {
+            payment: PaymentRecord;
+            transaction: TransactionIntent | null;
+          };
+        }
+        throw new ConflictException("an identical request is still being processed");
+      }
+      try {
+        const claimed = await this.prisma.idempotencyKey.create({
+          data: {
+            key: idempotencyKey,
+            scope,
+            requestHash,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        });
+        idempotencyId = claimed.id;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ConflictException("an identical request is still being processed");
+        }
+        throw error;
       }
     }
 
-    const amount = BigInt(input.amount);
-    const { fee, net } = splitAmount(amount, merchant.feeBps);
-    const payer = input.payerAddress ?? user.stellarAddress;
-    if (!payer) throw new BadRequestException("payerAddress is required when the account has no wallet");
+    try {
+      const merchant = await this.prisma.merchant.findUnique({ where: { id: input.merchantId } });
+      if (!merchant) throw new NotFoundException("merchant not found");
+      requireMerchantAccess(user, merchant);
+      if (merchant.status !== "ACTIVE") {
+        throw new ConflictException("merchant is not active");
+      }
 
-    const row = await this.prisma.payment.create({
-      data: {
-        merchantId: merchant.id,
-        payerAddress: payer,
-        token: input.token,
-        amount,
-        fee,
-        net,
-        memo: input.memo ?? null,
-        status: "PENDING",
-      },
-    });
+      const amount = BigInt(input.amount);
+      const { fee, net } = splitAmount(amount, merchant.feeBps);
+      const payer = input.payerAddress ?? user.stellarAddress;
+      if (!payer) {
+        throw new BadRequestException("payerAddress is required when the account has no wallet");
+      }
 
-    const transaction =
-      merchant.registryId && this.soroban.has("paymentRouter")
-        ? await this.soroban.paymentIntent({
-            payer,
-            merchantId: merchant.registryId,
-            token: input.token,
-            amount,
-            memo: input.memo ?? "",
-          })
-        : null;
-
-    const result = { payment: toPaymentRecord(row), transaction };
-    if (idempotencyKey) {
-      await this.prisma.idempotencyKey.upsert({
-        where: { scope_key: { scope: "payment.create", key: idempotencyKey } },
-        create: {
-          key: idempotencyKey,
-          scope: "payment.create",
-          requestHash: JSON.stringify(input),
-          response: JSON.parse(JSON.stringify(result)) as object,
-          statusCode: 201,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      const row = await this.prisma.payment.create({
+        data: {
+          merchantId: merchant.id,
+          payerAddress: payer,
+          token: input.token,
+          amount,
+          fee,
+          net,
+          memo: input.memo ?? null,
+          status: "PENDING",
         },
-        update: { response: JSON.parse(JSON.stringify(result)) as object },
       });
+
+      const transaction =
+        merchant.registryId && this.soroban.has("paymentRouter")
+          ? await this.soroban.paymentIntent({
+              payer,
+              merchantId: merchant.registryId,
+              token: input.token,
+              amount,
+              memo: input.memo ?? "",
+            })
+          : null;
+
+      const result = { payment: toPaymentRecord(row), transaction };
+      if (idempotencyId) {
+        await this.prisma.idempotencyKey.update({
+          where: { id: idempotencyId },
+          data: {
+            response: JSON.parse(JSON.stringify(result)) as object,
+            statusCode: 201,
+          },
+        });
+      }
+      await this.audit.record(user, "payment.created", "Payment", row.id, { amount: input.amount });
+      return result;
+    } catch (error) {
+      if (idempotencyId) {
+        await this.prisma.idempotencyKey.delete({ where: { id: idempotencyId } }).catch(() => {});
+      }
+      throw error;
     }
-    await this.audit.record(user, "payment.created", "Payment", row.id, { amount: input.amount });
-    return result;
   }
 
   async list(
@@ -209,7 +242,12 @@ export class PaymentsService {
     return intent;
   }
 
-  /** Links a wallet-signed Soroban transaction to the pending payment record. */
+  /**
+   * Links a wallet-signed Soroban transaction to the pending payment record.
+   * The network result is not enough: the PaymentRouter invocation arguments and
+   * the emitted payment event must both match this payment's payer, merchant,
+   * token and amount. Anything else is rejected instead of guessed.
+   */
   async confirm(user: AuthUser, id: string, txHash: string): Promise<PaymentRecord> {
     const row = await this.prisma.payment.findUnique({
       where: { id },
@@ -217,36 +255,97 @@ export class PaymentsService {
     });
     if (!row) throw new NotFoundException("payment not found");
     requireMerchantAccess(user, row.merchant);
+    if (row.status === "SETTLED") {
+      if (row.txHash === txHash) return toPaymentRecord(row);
+      throw new ConflictException("payment was already settled by a different transaction");
+    }
     if (row.status !== "PENDING") throw new ConflictException("payment is already final");
     if (!this.soroban.configured) {
       throw new ServiceUnavailableException("Soroban contracts are not configured");
+    }
+    if (!row.merchant.registryId) {
+      throw new ConflictException("merchant has no on-chain registry id");
     }
 
     const outcome = await this.soroban.gateway.awaitTransaction(txHash, 60_000);
     if (outcome.status !== "SUCCESS") {
       throw new BadRequestException(`transaction is not successful (${outcome.status})`);
     }
-    const updated = await this.prisma.payment.update({
-      where: { id },
-      data: {
-        status: "SETTLED",
+    const verified = await this.soroban.verifyPaymentTransaction(txHash, outcome.ledger, {
+      payer: row.payerAddress,
+      merchantId: row.merchant.registryId,
+      token: row.token,
+      amount: row.amount,
+    });
+    if (!verified) {
+      throw new BadRequestException(
+        "transaction does not contain a matching PaymentRouter payment for this record",
+      );
+    }
+
+    try {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.payment.updateMany({
+          where: { id, status: "PENDING" },
+          data: {
+            status: "SETTLED",
+            txHash,
+            ledger: outcome.ledger,
+            contractPaymentId: verified.contractPaymentId,
+            contractMerchantId: verified.merchantId,
+            fee: verified.fee,
+            net: verified.amount - verified.fee,
+            settledAt: new Date(),
+          },
+        });
+        if (claimed.count === 0) {
+          const current = await tx.payment.findUniqueOrThrow({ where: { id } });
+          if (current.status === "SETTLED" && current.txHash === txHash) return current;
+          throw new ConflictException("payment was finalised by another transaction");
+        }
+        const payment = await tx.payment.findUniqueOrThrow({ where: { id } });
+        if (payment.memo) {
+          await tx.invoice.updateMany({
+            where: { number: payment.memo, paymentId: null },
+            data: {
+              status: "PAID",
+              paidAt: new Date(),
+              paymentId: payment.id,
+              contractPaymentId: verified.contractPaymentId,
+              txHash,
+            },
+          });
+        }
+        await tx.invoice.updateMany({
+          where: { contractPaymentId: verified.contractPaymentId, paymentId: null },
+          data: {
+            status: "PAID",
+            paidAt: new Date(),
+            paymentId: payment.id,
+            txHash,
+          },
+        });
+        return payment;
+      });
+
+      await this.audit.record(user, "payment.confirmed", "Payment", id, {
         txHash,
-        settledAt: new Date(),
-        ledger: outcome.status === "SUCCESS" ? outcome.ledger : undefined,
-        contractPaymentId:
-          outcome.status === "SUCCESS" && typeof outcome.returnValue === "bigint"
-            ? outcome.returnValue
-            : undefined,
-      },
-    });
-    await this.audit.record(user, "payment.confirmed", "Payment", id, { txHash });
-    await this.webhooks.enqueueForMerchant(row.merchantId, "payment.settled", {
-      paymentId: id,
-      merchantId: row.merchantId,
-      amount: row.amount.toString(),
-      txHash,
-    });
-    return toPaymentRecord(updated);
+        contractPaymentId: verified.contractPaymentId.toString(),
+      });
+      await this.webhooks.enqueueForMerchant(row.merchantId, "payment.settled", {
+        paymentId: id,
+        merchantId: row.merchantId,
+        amount: row.amount.toString(),
+        txHash,
+        contractPaymentId: verified.contractPaymentId.toString(),
+      });
+      return toPaymentRecord(updated);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new ConflictException("transaction or contract payment id is already linked");
+      }
+      throw error;
+    }
   }
 }
 

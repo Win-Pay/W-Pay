@@ -191,8 +191,14 @@ export class WPayApi {
     public: (number: string) =>
       this.http.request<InvoiceRecord>("GET", `/v1/invoices/public/${number}`),
     cancel: (id: string) => this.http.request<InvoiceRecord>("POST", `/v1/invoices/${id}/cancel`),
-    payIntent: (number: string) =>
-      this.http.request<TransactionIntent>("POST", `/v1/invoices/public/${number}/intent`),
+    payIntent: (number: string, payer: string) =>
+      this.http.request<TransactionIntent>("POST", `/v1/invoices/public/${number}/intent`, {
+        payer,
+      }),
+    confirmPayment: (number: string, txHash: string) =>
+      this.http.request<InvoiceRecord>("POST", `/v1/invoices/public/${number}/confirm`, {
+        txHash,
+      }),
   };
 
   escrows = {
@@ -216,6 +222,8 @@ export class WPayApi {
       this.http.request<RefundRecord>("POST", "/v1/refunds", input),
     list: (query: { merchantId?: string; status?: string; limit?: number; cursor?: string } = {}) =>
       this.http.requestPage<RefundRecord>("/v1/refunds", query),
+    requestIntent: (id: string) =>
+      this.http.request<TransactionIntent>("POST", `/v1/refunds/${id}/intent`),
     approveIntent: (id: string) =>
       this.http.request<RefundIntentResponse>("POST", `/v1/refunds/${id}/approve`),
     reject: (id: string, reason: string) =>

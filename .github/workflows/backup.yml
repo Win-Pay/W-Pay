@@ -1,0 +1,146 @@
+name: Database backup and restore drill
+
+# Daily logical backup plus two independent restore checks:
+#  - verify-backup restores the production dump into an ephemeral Postgres and
+#    compares every row count with the manifest captured at dump time.
+#  - restore-drill exercises scripts/db-backup.sh and scripts/db-restore-drill.sh
+#    against a freshly migrated and seeded database in CI.
+# The production database is never written to by this workflow.
+
+on:
+  schedule:
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+env:
+  BACKUP_ARTIFACT: wpay-postgres-dump
+
+jobs:
+  backup:
+    name: Dump production database
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not configured"; exit 1
+          fi
+          bash scripts/db-backup.sh "$RUNNER_TEMP/wpay.dump"
+      - name: Record row-count manifest
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          tables="User Merchant Payment Invoice Refund Escrow IndexedEvent IndexerCheckpoint _prisma_migrations"
+          : > "$RUNNER_TEMP/manifest.txt"
+          for table in $tables; do
+            count="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM \"$table\";")"
+            echo "$table=$count" >> "$RUNNER_TEMP/manifest.txt"
+          done
+          cat "$RUNNER_TEMP/manifest.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BACKUP_ARTIFACT }}
+          path: |
+            ${{ runner.temp }}/wpay.dump
+            ${{ runner.temp }}/manifest.txt
+          retention-days: 30
+          if-no-files-found: error
+
+  verify-backup:
+    name: Restore production dump into scratch database
+    needs: backup
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: wpay
+          POSTGRES_PASSWORD: wpay
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wpay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: wpay
+      PGPASSWORD: wpay
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BACKUP_ARTIFACT }}
+          path: ${{ runner.temp }}
+      - name: Restore and compare counts
+        run: |
+          set -euo pipefail
+          createdb wpay_verify
+          pg_restore --no-owner --no-privileges --exit-on-error \
+            --dbname=wpay_verify "$RUNNER_TEMP/wpay.dump"
+          failed=0
+          while IFS='=' read -r table expected; do
+            [ -z "$table" ] && continue
+            actual="$(psql -d wpay_verify -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM \"$table\";")"
+            if [ "$actual" != "$expected" ]; then
+              echo "MISMATCH $table: manifest=$expected restored=$actual"
+              failed=1
+            else
+              echo "OK $table=$actual"
+            fi
+          done < "$RUNNER_TEMP/manifest.txt"
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::restored backup does not match manifest"; exit 1
+          fi
+
+  restore-drill:
+    name: Scripted backup and restore drill
+    needs: [backup]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: wpay
+          POSTGRES_PASSWORD: wpay
+          POSTGRES_DB: wpay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wpay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wpay:wpay@localhost:5432/wpay?schema=public
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: wpay
+      PGPASSWORD: wpay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate and seed
+        run: |
+          pnpm db:generate
+          pnpm --filter @wpay/database migrate
+          pnpm db:seed
+      - name: Backup, restore into scratch database and compare
+        env:
+          POSTGRES_DB: wpay
+          POSTGRES_USER: wpay
+        run: bash scripts/db-restore-drill.sh

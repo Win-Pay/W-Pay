@@ -7,7 +7,15 @@
  * `submit` must translate the gateway outcome faithfully.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import {
+  Account,
+  Contract,
+  Keypair,
+  StrKey,
+  TransactionBuilder,
+  nativeToScVal,
+  rpc,
+} from "@stellar/stellar-sdk";
 import { randomBytes } from "node:crypto";
 import type { AppConfig } from "./config";
 import { SorobanService } from "./soroban.service";
@@ -95,6 +103,10 @@ describe("SorobanService", () => {
       prepareInvocation: typeof prepareInvocation;
       submit: ReturnType<typeof vi.fn>;
       awaitTransaction: ReturnType<typeof vi.fn>;
+      server: {
+        getTransaction: ReturnType<typeof vi.fn>;
+        getEvents: ReturnType<typeof vi.fn>;
+      };
     };
 
     beforeEach(() => {
@@ -107,6 +119,10 @@ describe("SorobanService", () => {
         prepareInvocation,
         submit: vi.fn(async () => ({ hash: "deadbeef" })),
         awaitTransaction: vi.fn(async () => ({ status: "SUCCESS", ledger: 42, returnValue: 1 })),
+        server: {
+          getTransaction: vi.fn(),
+          getEvents: vi.fn(async () => ({ events: [] })),
+        },
       };
       // Replace the real RPC-backed gateway for the duration of the test.
       Object.assign(service as unknown as { gateway: unknown }, { gateway });
@@ -126,6 +142,73 @@ describe("SorobanService", () => {
       expect(intent!.networkPassphrase).toBe("Test SDF Network ; September 2015");
       expect(intent!.description.length).toBeGreaterThan(0);
       expect(prepareInvocation).toHaveBeenCalledTimes(1);
+    });
+
+    it("verifies a successful transaction against its payment event", async () => {
+      const payer = Keypair.random().publicKey();
+      const token = Keypair.random().publicKey();
+      const merchantId = 7n;
+      const amount = 5_000n;
+      const fee = 125n;
+      const txHash = "a".repeat(64);
+      const transaction = new TransactionBuilder(new Account(payer, "1"), {
+        fee: "100",
+        networkPassphrase: "Test SDF Network ; September 2015",
+      })
+        .addOperation(
+          new Contract(contractId).call(
+            "create_payment",
+            nativeToScVal(payer),
+            nativeToScVal(merchantId, { type: "u64" }),
+            nativeToScVal(token),
+            nativeToScVal(amount, { type: "i128" }),
+            nativeToScVal("order-7"),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      gateway.server.getTransaction.mockResolvedValue({
+        status: rpc.Api.GetTransactionStatus.SUCCESS,
+        ledger: 42,
+        envelopeXdr: transaction.toXDR(),
+      });
+      gateway.server.getEvents.mockResolvedValue({
+        events: [
+          {
+            txHash,
+            topic: [
+              nativeToScVal("payment", { type: "symbol" }),
+              nativeToScVal(99n, { type: "u64" }),
+            ],
+            value: nativeToScVal([payer, merchantId, amount, fee]),
+          },
+        ],
+      });
+
+      const verified = await service.verifyPaymentTransaction(txHash, 42, {
+        payer,
+        merchantId,
+        token,
+        amount,
+      });
+      expect(verified).toMatchObject({
+        contractPaymentId: 99n,
+        payer,
+        merchantId,
+        token,
+        amount,
+        fee,
+      });
+
+      await expect(
+        service.verifyPaymentTransaction(txHash, 42, {
+          payer,
+          merchantId,
+          token,
+          amount: amount + 1n,
+        }),
+      ).resolves.toBeNull();
     });
 
     it("returns null and logs when the gateway fails to prepare", async () => {

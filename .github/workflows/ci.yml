@@ -34,12 +34,26 @@ jobs:
           path: packages/contracts/target/wasm32v1-none/release/*.wasm
           if-no-files-found: error
 
+  rust-audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # RUSTSEC-2026-0387 is transitive through soroban-env-host 29.0.1
+      # (crypto-bigint 0.5.5 via elliptic-curve 0.13); no compatible patched
+      # release exists yet. Triaged in docs/AUDIT.md and re-checked on SDK bumps.
+      - name: Audit contracts
+        run: cargo audit --file packages/contracts/Cargo.lock --ignore RUSTSEC-2026-0387
+
   javascript:
     name: TypeScript workspace
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
           POSTGRES_USER: wpay
           POSTGRES_PASSWORD: wpay
@@ -64,6 +78,8 @@ jobs:
           cache: pnpm
       - name: Install (supply-chain policy enforced by pnpm-workspace allowBuilds)
         run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
       - name: Prisma generate and migrate
         run: |
           pnpm db:generate
@@ -99,3 +115,81 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  loadtest:
+    name: k6 load test
+    runs-on: ubuntu-latest
+    needs: [javascript]
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: wpay
+          POSTGRES_PASSWORD: wpay
+          POSTGRES_DB: wpay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wpay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wpay:wpay@localhost:5432/wpay?schema=public
+      JWT_SECRET: ci-only-secret-that-is-long-enough-for-validation
+      STELLAR_NETWORK: testnet
+      REDIS_URL: redis://localhost:6379
+      API_PORT: "4000"
+      # The load test measures the service, not the per-IP public quota.
+      RATE_LIMIT_PER_MINUTE: "100000"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prisma generate and migrate
+        run: |
+          pnpm db:generate
+          pnpm --filter @wpay/database migrate
+      - name: Build API
+        run: pnpm --filter @wpay/api... build
+      - name: Start API
+        run: |
+          node apps/api/dist/main.js > /tmp/wpay-api.log 2>&1 &
+          echo $! > /tmp/wpay-api.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:4000/v1/health && exit 0
+            sleep 1
+          done
+          cat /tmp/wpay-api.log
+          exit 1
+      - name: Seed load-test data
+        run: NODE_PATH=apps/api/node_modules node loadtest/seed.cjs >> "$GITHUB_ENV"
+      - uses: grafana/setup-k6-action@v1
+      - name: Run k6
+        run: |
+          k6 run --out json=/tmp/k6-results.json \
+            -e BASE_URL=http://127.0.0.1:4000 \
+            -e EMAIL="$K6_EMAIL" -e PASSWORD="$K6_PASSWORD" -e INVOICE="$K6_INVOICE" \
+            loadtest/wpay.k6.js
+      - name: Upload k6 results and API log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: |
+            /tmp/k6-results.json
+            /tmp/wpay-api.log
+          if-no-files-found: ignore
+      - name: Stop API
+        if: always()
+        run: kill "$(cat /tmp/wpay-api.pid)" 2>/dev/null || true

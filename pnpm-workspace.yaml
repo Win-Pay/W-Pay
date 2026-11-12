@@ -22,3 +22,13 @@ onlyBuiltDependencies:
   - sharp
   - "@scarf/scarf"
   - "@swc/core"
+
+# Security overrides for transitive advisories without a safe upstream range in
+# the parent package. Keep this list reviewable: each entry pins a patched
+# version and is verified by `pnpm audit --prod --audit-level=high` in CI.
+overrides:
+  "js-yaml@<4.3.2": "4.3.2"
+  "lodash@<4.18.1": "4.18.1"
+  "postcss@<8.5.32": "8.5.32"
+  "deepmerge-ts@<8.0.2": "8.0.2"
+  "toml@<5.0.1": "5.0.1"

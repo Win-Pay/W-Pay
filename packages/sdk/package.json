@@ -12,7 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^13.1.0",
+    "@stellar/stellar-sdk": "16.4.1",
     "@wpay/config": "workspace:*",
     "@wpay/shared": "workspace:*",
     "@wpay/types": "workspace:*"

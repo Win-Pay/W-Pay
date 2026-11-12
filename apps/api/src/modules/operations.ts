@@ -246,6 +246,8 @@ type RefundRow = {
   amount: bigint;
   reason: string;
   status: string;
+  contractRefundId: bigint | null;
+  txHash: string | null;
   createdAt: Date;
   decidedAt: Date | null;
 };
@@ -259,6 +261,8 @@ function toRefund(row: RefundRow): RefundRecord {
     amount: row.amount.toString(),
     reason: row.reason,
     status: row.status as RefundRecord["status"],
+    contractRefundId: row.contractRefundId?.toString() ?? null,
+    txHash: row.txHash,
     createdAt: row.createdAt.toISOString(),
     decidedAt: row.decidedAt?.toISOString() ?? null,
   };
@@ -330,6 +334,35 @@ export class RefundsService {
     return { items, nextCursor: rows.length > limit ? encodeCursor(items[items.length - 1]!.id) : null };
   }
 
+  /**
+   * Builds the RefundManager.request transaction. Only the payer can sign it,
+   * and only after the underlying payment has an on-chain id.
+   */
+  async requestIntent(user: AuthUser, id: string): Promise<TransactionIntent> {
+    const row = await this.prisma.refund.findUnique({
+      where: { id },
+      include: { payment: true },
+    });
+    if (!row) throw new NotFoundException("refund not found");
+    if (row.status !== "PENDING") throw new ConflictException("refund is already decided");
+    if (row.contractRefundId) throw new ConflictException("refund is already on chain");
+    if (!row.payment.contractPaymentId) {
+      throw new ConflictException("payment has no on-chain id");
+    }
+    if (user.stellarAddress !== row.payerAddress) {
+      throw new ConflictException("only the refund payer can request it on chain");
+    }
+    const intent = await this.soroban.requestRefundIntent({
+      payer: row.payerAddress,
+      paymentId: row.payment.contractPaymentId,
+      amount: row.amount,
+      reason: row.reason,
+    });
+    if (!intent) throw new ConflictException("unable to build refund request");
+    await this.audit.record(user, "refund.request_intent", "Refund", id, {});
+    return intent;
+  }
+
   /** Returns the transaction the settlement wallet must sign, and marks intent. */
   async approve(
     user: AuthUser,
@@ -352,14 +385,22 @@ export class RefundsService {
     ) {
       throw new ConflictException("only the settlement wallet can approve this refund");
     }
+    // Refund ids are assigned by the RefundManager contract; the indexer links
+    // them back to this record. Without that link there is nothing to sign and
+    // no transaction is fabricated.
+    const transaction = row.contractRefundId
+      ? await this.soroban.approveRefundIntent(
+          row.merchant.settlementAddress,
+          row.contractRefundId,
+        )
+      : null;
+    if (row.contractRefundId && !transaction) {
+      throw new ConflictException("unable to build the on-chain refund approval");
+    }
     const updated = await this.prisma.refund.update({
       where: { id },
       data: { status: "APPROVED", decidedAt: new Date() },
     });
-    // Refund ids are assigned by the RefundManager contract; the indexer links
-    // them back to this record. Until that link exists there is nothing to sign,
-    // so no transaction is fabricated here.
-    const transaction: TransactionIntent | null = null;
     await this.audit.record(user, "refund.approved", "Refund", id, {});
     await this.webhooks.enqueueForMerchant(row.merchantId, "refund.approved", {
       refundId: id,
@@ -410,6 +451,11 @@ export class RefundsController {
       limit: query.limit ? Number(query.limit) : undefined,
       cursor: query.cursor,
     });
+  }
+
+  @Post(":id/intent")
+  requestIntent(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.refunds.requestIntent(user, id);
   }
 
   @Post(":id/approve")

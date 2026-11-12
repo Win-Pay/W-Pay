@@ -57,7 +57,7 @@ async function json<T>(
       ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
       ...init.headers,
     },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   const text = await response.text();
   return { status: response.status, body: (text ? JSON.parse(text) : null) as T };
@@ -436,10 +436,11 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
 
     it("replays an idempotent create instead of double-charging", async () => {
       const key = `idem-${run}`;
+      const body = { merchantId, token: address(), amount: "5000", payerAddress: payer };
       const first = await json<{ payment: { id: string } }>(harness.baseUrl, "/payments", {
         method: "POST",
         token: adminToken,
-        body: { merchantId, token: address(), amount: "5000", payerAddress: payer },
+        body,
         headers: { "idempotency-key": key },
       });
       expect(first.status).toBe(201);
@@ -448,7 +449,7 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       const second = await json<{ payment: { id: string } }>(harness.baseUrl, "/payments", {
         method: "POST",
         token: adminToken,
-        body: { merchantId, token: address(), amount: "5000", payerAddress: payer },
+        body,
         headers: { "idempotency-key": key },
       });
       expect(second.status).toBe(201);
@@ -458,6 +459,30 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
         where: { id: { in: [first.body.payment.id, second.body.payment.id] } },
       });
       expect(count).toBe(1);
+    });
+
+    it("rejects an idempotency key reused with a different body", async () => {
+      const key = `idem-conflict-${run}`;
+      const first = await json(harness.baseUrl, "/payments", {
+        method: "POST",
+        token: adminToken,
+        body: { merchantId, token: address(), amount: "7000", payerAddress: payer },
+        headers: { "idempotency-key": key },
+      });
+      expect(first.status).toBe(201);
+      const createdPayment = await harness.prisma.payment.findFirstOrThrow({
+        where: { merchantId, amount: 7000n, payerAddress: payer },
+        orderBy: { createdAt: "desc" },
+      });
+      created.payments.push(createdPayment.id);
+
+      const second = await json(harness.baseUrl, "/payments", {
+        method: "POST",
+        token: adminToken,
+        body: { merchantId, token: address(), amount: "8000", payerAddress: payer },
+        headers: { "idempotency-key": key },
+      });
+      expect(second.status).toBe(409);
     });
 
     it("refuses a payment for a suspended merchant", async () => {
@@ -721,7 +746,7 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
           token: adminToken,
           body: {
             merchantId,
-            url: "https://example.test/wpay-hook",
+            url: "https://93.184.216.34/wpay-hook",
             events: ["payment.settled"],
           },
         },
@@ -792,12 +817,13 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       const cancelled = await json(
         harness.baseUrl,
         `/invoices/public/${invoiceNumber}/intent`,
-        { method: "POST" },
+        { method: "POST", body: { payer: address() } },
       );
       expect(cancelled.status).toBe(409);
 
       const missing = await json(harness.baseUrl, "/invoices/public/INV-MISSING-000/intent", {
         method: "POST",
+        body: { payer: address() },
       });
       expect(missing.status).toBe(404);
     });

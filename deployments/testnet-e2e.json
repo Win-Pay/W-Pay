@@ -1,0 +1,32 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "payer": "GC3AOR6HUH7VEVPGPQVSI3MI6EQTPD3WZQ2BLGJ7KUIF7C42YM5T6ATZ",
+  "merchantSettlement": "GD6ZGJBQWVZXA652ORVM4NPOISP2HV3G2GFNO5PWLVQFGN3WQYG4UYLD",
+  "treasury": "GDUCNJFS3ATDWJWPWOVVUOMO6CWD4I6TXVJV7AAC52VAZOZQYTRFMXF4",
+  "tokenContractId": "CDCYAJJ3PEE5ZHCL5QZJTQPV27EDJTM2AALPUWTSS743VPH5ZQLOKRKW",
+  "tokenDeployTxHash": "already-deployed",
+  "mintTxHash": null,
+  "transactions": {
+    "feeManagerInitialize": null,
+    "merchantRegistryInitialize": null,
+    "grantOperator": "92536896c252542ef996959b759102675f949e08e310ee374dbd7280cae9e481",
+    "merchantRegister": null,
+    "merchantApprove": null,
+    "paymentRouterInitialize": null
+  },
+  "merchantId": "1",
+  "payment": {
+    "id": "1",
+    "txHash": "db354f7f04a6703b66f37a916c6e4994a017dd45c3689923e43cd9476257e47d",
+    "ledger": 5698164,
+    "amount": "10000000",
+    "fee": "250000",
+    "net": "9750000",
+    "status": "Settled",
+    "eventVerified": true,
+    "treasuryBalance": "250000",
+    "merchantBalance": "9750000"
+  },
+  "verifiedAt": "2026-11-12T20:44:31.713Z"
+}

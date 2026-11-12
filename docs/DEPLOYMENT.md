@@ -1,7 +1,9 @@
 # Deployment runbook
 
-This describes how to deploy. **Nothing has been deployed by this repository**;
-the steps below have not been executed against a production network.
+This describes how to deploy. **Testnet:** all 16 contracts were deployed on
+2026-11-12 and one end-to-end payment was verified; ids and transactions are in
+[DEPLOYMENTS.md](../DEPLOYMENTS.md). **No production/mainnet deployment has been
+performed**, and the production steps below have not been executed.
 
 ## 0. Preconditions
 
@@ -20,6 +22,21 @@ pnpm contracts:build
 # Inspect sizes/hashes
 sha256sum packages/contracts/target/wasm32v1-none/release/*.wasm
 ```
+
+### Testnet (automated, idempotent)
+
+```bash
+SOROBAN_SOURCE_SECRET=S... node scripts/deploy-testnet.cjs
+node scripts/e2e-testnet.cjs
+```
+
+The deployer writes `deployments/testnet.json` with contract ids, upload/create
+transaction hashes and WASM hashes, and resumes by verifying existing contract
+data. `e2e-testnet.cjs` settles one payment and verifies the event and balances;
+re-running verifies the recorded payment instead of paying twice. The Testnet
+deployer in this repository is a throwaway key — do not reuse it for production.
+
+### Production
 
 Deploy each contract with the Stellar CLI using an account you control:
 
@@ -46,6 +63,9 @@ pnpm db:migrate     # prisma migrate deploy
 
 Run migrations before rolling pods. Take a backup first; a failed migration is
 not automatically reversible. Seed only the first time.
+`DATABASE_URL=... pnpm db:backup` writes a custom-format dump;
+`pnpm db:restore-drill <dump>` restores it into a scratch database and compares
+row counts. The daily workflow in `.github/workflows/backup.yml` does both.
 
 ## 3. Images
 

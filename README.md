@@ -6,14 +6,15 @@ subscriptions, and settle to their own treasury address — with customer,
 merchant and administrator applications, an on-chain event indexer, and a
 TypeScript SDK.
 
-> **Deployment status: frontend hosting only.** The checkout and both
-dashboards are hosted on Vercel: [wpay-web](https://wpay-web.vercel.app),
-> [wpay-merchant](https://wpay-merchant.vercel.app),
-> [wpay-admin](https://wpay-admin.vercel.app). No contract is deployed to any
-> Stellar network, and no API, database or indexer is deployed — so the live
-> pages cannot look up invoices, log in or take payments yet. Contract
-> addresses in `.env.example` are empty on purpose; see
-> [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified deployment records.
+> **Deployment status: testnet contracts verified, backend still local.**
+> All 16 contracts are deployed to Stellar Testnet with recorded ids and
+> transactions, and a full testnet payment has settled and been confirmed
+> through the API. The API, Postgres and indexer are not hosted, so the Vercel
+> frontends ([web](https://wpay-web.vercel.app),
+> [merchant](https://wpay-merchant.vercel.app),
+> [admin](https://wpay-admin.vercel.app)) cannot look up invoices, log in or
+> take payments yet. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for the verified
+> contract ids, transaction hashes, WASM hashes and the end-to-end payment.
 
 ## Live deployments
 
@@ -25,16 +26,17 @@ dashboards are hosted on Vercel: [wpay-web](https://wpay-web.vercel.app),
 
 All three are production deployments of the frontends only and return HTTP 200.
 They have no API or database behind them yet, so logins and invoice lookups fail
-until the backend is deployed.
+until the backend is hosted. The contracts they would call are live on Testnet;
+the missing piece is the backend deployment, not the contracts.
 
 ## What is implemented
 
 | Area | State |
 | --- | --- |
-| 16 Soroban contracts | Implemented in Rust, unit + integration tested, builds to `wasm32v1-none` |
-| REST API (NestJS) | Implemented: auth, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics |
-| Database (Postgres + Prisma) | Schema, baseline migration, client, seed |
-| Indexer | Soroban RPC event ingestion, idempotent persistence, checkpoints, health/metrics |
+| 16 Soroban contracts | Implemented in Rust, 138 tests, builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
+| REST API (NestJS) | Implemented: auth, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 130 tests including real Postgres integration |
+| Database (Postgres + Prisma) | Schema, baseline migration, client, seed; transactions and rollbacks covered by integration tests |
+| Indexer | Soroban RPC event ingestion, idempotent persistence, checkpoints, health/metrics, payment/refund/escrow/settlement projections |
 | TypeScript SDK | API client, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, wallet connect, signed Soroban payment submission |
 | Merchant dashboard | Login, analytics, payments, invoices, refunds |
@@ -45,21 +47,24 @@ until the backend is deployed.
 
 ## What is not implemented / not verified
 
-See [ROADMAP.md](ROADMAP.md) and the final section of [docs/AUDIT.md](docs/AUDIT.md).
-Short version:
+See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
+[final engineering report](docs/FINAL-ENGINEERING-REPORT.md). Short version:
 
-- **No deployed contracts**, therefore no live end-to-end payment has been
-  exercised against a network. Contract behaviour is verified by tests on the
-  Soroban test host, not on-chain.
-- API integration tests against a real Postgres are not in the repo; API tests
-  cover pure logic (access rules, API keys, validation, serialization).
-- Refund approval records the decision but cannot build an on-chain transaction
-  until the indexer links the contract-assigned refund id to the record.
+- **Testnet only.** No mainnet deployment, no real funds, no external audit.
+  The Testnet deployer is a throwaway friendbot-funded key, not multisig.
+- The API, Postgres, Redis and indexer are not hosted; they run locally or via
+  Docker Compose. The hosted Vercel pages therefore cannot process payments.
+- Wallet flows are implemented with Freighter connect/sign/submit, but browser
+  interaction tests (Playwright) do not exist; connection is not covered by CI.
 - The mobile app is a read-only PWA (no wallet signing), and the extension does
   not sign transactions.
-- Redis-backed rate limiting is not implemented; the limiter is in-process, so
-  limits are per replica.
-- There is no external security audit.
+- Refund approval builds an on-chain transaction only after the indexer has
+  linked the contract-assigned refund id; until then it returns `409` rather
+  than pretending to submit.
+- Redis-backed rate limiting is implemented, but deployments without `REDIS_URL`
+  fall back to per-process counters and multiply the quota per replica.
+- No external security audit has occurred. The internal review in
+  [docs/AUDIT.md](docs/AUDIT.md) is not an audit.
 
 ## Architecture
 
@@ -125,15 +130,22 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Contract tests | `pnpm contracts:test` | 138 passed, 0 failed |
-| Contract WASM build | `pnpm contracts:build` | 16/16 artifacts, 20–41 KB |
-| TypeScript typecheck | `pnpm typecheck` | passes |
-| TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile) |
-| TypeScript tests | `pnpm test` | 52 passed, 2 skipped (shared 10, database 4, api 10, sdk 11, indexer 7, e2e 10; live-API tests skip without `WPAY_E2E_API_URL`) |
+| Contract tests | `pnpm contracts:test` | 138 passed, 0 failed (18 suites) |
+| Contract WASM build | `pnpm contracts:build` | 16/16 artifacts; hashes match deployed Testnet WASM |
+| Testnet deployment | `node scripts/deploy-testnet.cjs` | 16 contracts, all upload/create txs `SUCCESS` |
+| Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
+| TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
+| TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
+| TypeScript tests | `pnpm test` | 188 passed, 2 skipped (api 130, indexer 23, sdk 11, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.23% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57% |
+| Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
+| Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
+| Backup restore drill | `scripts/db-restore-drill.sh` | source and restored row counts match |
 
-These results come from the commands above in this repository; they are not a
-claim about on-chain behaviour.
+These results come from the commands above in this repository. The on-chain
+claim is limited to the recorded Testnet transactions in
+[`deployments/`](deployments); no mainnet behaviour is claimed.
 
 ## Security
 

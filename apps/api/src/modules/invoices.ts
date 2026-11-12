@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -9,17 +10,22 @@ import {
   Param,
   Post,
   Query,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { randomBytes } from "node:crypto";
 import {
+  ConfirmPaymentSchema,
   CreateInvoiceSchema,
+  PayInvoiceIntentSchema,
   type CreateInvoiceInput,
   type InvoiceRecord,
+  type PayInvoiceIntentInput,
   type TransactionIntent,
 } from "@wpay/types";
-import { clampPageSize } from "@wpay/config";
+import { clampPageSize, splitAmount } from "@wpay/config";
 import { encodeCursor } from "@wpay/shared";
+import { Prisma } from "@wpay/database";
 import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
@@ -42,6 +48,9 @@ type InvoiceRow = {
   dueAt: Date;
   paidAt: Date | null;
   paymentId: string | null;
+  contractInvoiceId: bigint | null;
+  contractPaymentId: bigint | null;
+  txHash: string | null;
   customerEmail: string | null;
   createdAt: Date;
 };
@@ -58,6 +67,9 @@ export function toInvoiceRecord(row: InvoiceRow): InvoiceRecord {
     dueAt: row.dueAt.toISOString(),
     paidAt: row.paidAt?.toISOString() ?? null,
     paymentId: row.paymentId,
+    contractInvoiceId: row.contractInvoiceId?.toString() ?? null,
+    contractPaymentId: row.contractPaymentId?.toString() ?? null,
+    txHash: row.txHash,
     customerEmail: row.customerEmail,
     createdAt: row.createdAt.toISOString(),
   };
@@ -156,8 +168,8 @@ export class InvoicesService {
     return toInvoiceRecord(updated);
   }
 
-  /** Builds the payment intent a customer wallet signs to pay this invoice. */
-  async payIntent(number: string): Promise<TransactionIntent> {
+  /** Builds the payment intent the customer's own wallet signs for this invoice. */
+  async payIntent(number: string, input: PayInvoiceIntentInput): Promise<TransactionIntent> {
     const row = await this.prisma.invoice.findUnique({
       where: { number },
       include: { merchant: true },
@@ -168,15 +180,168 @@ export class InvoicesService {
     if (!this.soroban.has("paymentRouter")) {
       throw new ConflictException("Soroban contracts are not configured");
     }
+    if (!row.merchant.registryId) {
+      throw new ConflictException("merchant is not registered on chain");
+    }
+
+    const { fee, net } = splitAmount(row.amount, row.merchant.feeBps);
+    let payment = await this.prisma.payment.findFirst({
+      where: {
+        merchantId: row.merchantId,
+        payerAddress: input.payer,
+        memo: row.number,
+        amount: row.amount,
+        status: "PENDING",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!payment) {
+      payment = await this.prisma.payment.create({
+        data: {
+          merchantId: row.merchantId,
+          payerAddress: input.payer,
+          token: row.token,
+          amount: row.amount,
+          fee,
+          net,
+          memo: row.number,
+          status: "PENDING",
+        },
+      });
+    }
+
     const intent = await this.soroban.paymentIntent({
-      payer: row.merchant.ownerAddress,
-      merchantId: row.merchant.registryId ?? 0n,
+      payer: input.payer,
+      merchantId: row.merchant.registryId,
       token: row.token,
       amount: row.amount,
-      memo: row.memo ?? row.number,
+      memo: row.number,
     });
     if (!intent) throw new ConflictException("unable to build invoice payment");
-    return intent;
+    return { ...intent, paymentId: payment.id };
+  }
+
+  /**
+   * Public checkout confirmation. Verifies the transaction against the network
+   * before linking it to the invoice; the transaction must contain a
+   * PaymentRouter payment for this invoice's merchant, token and amount.
+   */
+  async confirmPayment(number: string, txHash: string): Promise<InvoiceRecord> {
+    const row = await this.prisma.invoice.findUnique({
+      where: { number },
+      include: { merchant: true },
+    });
+    if (!row) throw new NotFoundException("invoice not found");
+    if (row.status === "PAID") {
+      if (row.txHash === txHash) return toInvoiceRecord(row);
+      throw new ConflictException("invoice was already paid by a different transaction");
+    }
+    if (row.status !== "OPEN") throw new ConflictException("invoice is not open");
+    if (!this.soroban.configured) {
+      throw new ServiceUnavailableException("Soroban contracts are not configured");
+    }
+    if (!row.merchant.registryId) {
+      throw new ConflictException("merchant is not registered on chain");
+    }
+
+    const outcome = await this.soroban.gateway.awaitTransaction(txHash, 60_000);
+    if (outcome.status !== "SUCCESS") {
+      throw new BadRequestException(`transaction is not successful (${outcome.status})`);
+    }
+    const verified = await this.soroban.verifyPaymentTransaction(txHash, outcome.ledger);
+    if (!verified) {
+      throw new BadRequestException(
+        "transaction does not contain a decodable PaymentRouter payment",
+      );
+    }
+    if (
+      verified.merchantId !== row.merchant.registryId ||
+      verified.token !== row.token ||
+      verified.amount !== row.amount
+    ) {
+      throw new BadRequestException("transaction does not match this invoice");
+    }
+
+    try {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        let payment = await tx.payment.findFirst({
+          where: {
+            OR: [{ txHash }, { contractPaymentId: verified.contractPaymentId }],
+          },
+        });
+        if (payment?.status === "SETTLED" && payment.txHash !== txHash) {
+          throw new ConflictException("transaction is already linked to another payment");
+        }
+        if (!payment) {
+          const candidates = await tx.payment.findMany({
+            where: {
+              merchantId: row.merchantId,
+              payerAddress: verified.payer,
+              memo: row.number,
+              amount: row.amount,
+              status: "PENDING",
+            },
+            take: 2,
+            orderBy: { createdAt: "desc" },
+          });
+          payment = candidates.length === 1 ? candidates[0]! : null;
+        }
+        if (payment && payment.status === "PENDING") {
+          await tx.payment.updateMany({
+            where: { id: payment.id, status: "PENDING" },
+            data: {
+              status: "SETTLED",
+              txHash,
+              ledger: outcome.ledger,
+              contractPaymentId: verified.contractPaymentId,
+              contractMerchantId: verified.merchantId,
+              fee: verified.fee,
+              net: verified.amount - verified.fee,
+              settledAt: new Date(),
+            },
+          });
+          payment = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        } else if (!payment) {
+          payment = await tx.payment.create({
+            data: {
+              merchantId: row.merchantId,
+              payerAddress: verified.payer,
+              token: verified.token,
+              amount: verified.amount,
+              fee: verified.fee,
+              net: verified.amount - verified.fee,
+              memo: row.number,
+              status: "SETTLED",
+              txHash,
+              ledger: outcome.ledger,
+              contractPaymentId: verified.contractPaymentId,
+              contractMerchantId: verified.merchantId,
+              settledAt: new Date(),
+            },
+          });
+        }
+        return tx.invoice.update({
+          where: { id: row.id },
+          data: {
+            status: "PAID",
+            paidAt: row.paidAt ?? new Date(),
+            paymentId: payment.id,
+            contractPaymentId: verified.contractPaymentId,
+            txHash,
+          },
+        });
+      });
+      await this.audit.record(null, "invoice.paid", "Invoice", row.id, {
+        txHash,
+        contractPaymentId: verified.contractPaymentId.toString(),
+      });
+      return toInvoiceRecord(updated);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new ConflictException("transaction or contract payment id is already linked");
+      }
+      throw error;
+    }
   }
 }
 
@@ -214,8 +379,20 @@ export class InvoicesController {
 
   @Public()
   @Post("public/:number/intent")
-  payIntent(@Param("number") number: string) {
-    return this.invoices.payIntent(number);
+  payIntent(
+    @Param("number") number: string,
+    @Body(new ZodPipe(PayInvoiceIntentSchema)) input: PayInvoiceIntentInput,
+  ) {
+    return this.invoices.payIntent(number, input);
+  }
+
+  @Public()
+  @Post("public/:number/confirm")
+  confirmPayment(
+    @Param("number") number: string,
+    @Body(new ZodPipe(ConfirmPaymentSchema)) input: { txHash: string },
+  ) {
+    return this.invoices.confirmPayment(number, input.txHash);
   }
 
   @Get(":id")

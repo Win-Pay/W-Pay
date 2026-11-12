@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Keypair, nativeToScVal, xdr } from "@stellar/stellar-sdk";
-import { decodeEvent, eventPayload, jsonSafe, planPaymentUpdate } from "./decode";
+import { decodeEvent, eventPayload, jsonSafe, planEvent, planPaymentUpdate } from "./decode";
 import { hashToken } from "./indexer";
 
 function rawEvent(options: {
@@ -74,6 +74,110 @@ describe("planPaymentUpdate", () => {
       }),
     );
     expect(planPaymentUpdate(event)).toBeNull();
+  });
+});
+
+describe("planEvent", () => {
+  it("plans a refund request with its payment link", () => {
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("request", { type: "symbol" }), nativeToScVal(8n, { type: "u64" })],
+        value: nativeToScVal([42n, 500n]),
+      }),
+    );
+    expect(planEvent("refundManager", decoded)).toMatchObject({
+      type: "refund.requested",
+      contractRefundId: "8",
+      contractPaymentId: "42",
+      amount: "500",
+    });
+  });
+
+  it("plans an invoice paid event", () => {
+    const payer = Keypair.random().publicKey();
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("paid", { type: "symbol" }), nativeToScVal(11n, { type: "u64" })],
+        value: nativeToScVal([payer, 42n]),
+      }),
+    );
+    expect(planEvent("invoiceManager", decoded)).toMatchObject({
+      type: "invoice.paid",
+      contractInvoiceId: "11",
+      payer,
+      contractPaymentId: "42",
+    });
+  });
+
+  it("plans a settlement execution with its total", () => {
+    const operator = Keypair.random().publicKey();
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("execute", { type: "symbol" }), nativeToScVal(9n, { type: "u64" })],
+        value: nativeToScVal([operator, 5000n]),
+      }),
+    );
+    expect(planEvent("settlementManager", decoded)).toMatchObject({
+      type: "settlement.executed",
+      windowIdOnChain: "9",
+      total: "5000",
+      operator,
+    });
+  });
+
+  it("plans an escrow resolution as a final status", () => {
+    const arbiter = Keypair.random().publicKey();
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("resolve", { type: "symbol" }), nativeToScVal(3n, { type: "u64" })],
+        value: nativeToScVal([arbiter, true]),
+      }),
+    );
+    expect(planEvent("escrowManager", decoded)).toMatchObject({
+      type: "escrow.status",
+      contractEscrowId: "3",
+      status: "RELEASED",
+    });
+  });
+
+  it("plans a subscription charge", () => {
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("charge", { type: "symbol" }), nativeToScVal(5n, { type: "u64" })],
+        value: nativeToScVal([2n, 1000n]),
+      }),
+    );
+    expect(planEvent("subscriptionManager", decoded)).toMatchObject({
+      type: "subscription.charged",
+      contractSubId: "5",
+      cyclesCharged: "2",
+      amount: "1000",
+    });
+  });
+
+  it("plans a merchant registration from the data tuple", () => {
+    const owner = Keypair.random().publicKey();
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("register", { type: "symbol" })],
+        value: nativeToScVal([1n, owner]),
+      }),
+    );
+    expect(planEvent("merchantRegistry", decoded)).toMatchObject({
+      type: "merchant.registered",
+      registryId: "1",
+      owner,
+    });
+  });
+
+  it("ignores events from other contracts with the same name", () => {
+    const decoded = decodeEvent(
+      rawEvent({
+        topics: [nativeToScVal("cancel", { type: "symbol" }), nativeToScVal(1n)],
+        value: nativeToScVal(5n),
+      }),
+    );
+    expect(planEvent("paymentRouter", decoded)).toBeNull();
   });
 });
 

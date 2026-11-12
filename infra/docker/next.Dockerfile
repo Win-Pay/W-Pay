@@ -1,6 +1,6 @@
 # Generic Next.js image for web, merchant-dashboard and admin-dashboard.
 # Build with: --build-arg APP=web|merchant-dashboard|admin-dashboard
-FROM node:22-alpine AS base
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS base
 RUN corepack enable && corepack prepare pnpm@12.16.1 --activate
 WORKDIR /repo
 

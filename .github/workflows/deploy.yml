@@ -34,21 +34,29 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
       - name: Build and push API
+        id: api
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/docker/api.Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/wpay-api:${{ inputs.image_tag }}
+          provenance: true
+          sbom: true
       - name: Build and push indexer
+        id: indexer
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/docker/indexer.Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/wpay-indexer:${{ inputs.image_tag }}
+          provenance: true
+          sbom: true
       - name: Build and push web
+        id: web
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -58,6 +66,13 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ vars.API_PUBLIC_URL }}
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/wpay-web:${{ inputs.image_tag }}
+          provenance: true
+          sbom: true
+      - name: Sign published images (keyless OIDC)
+        run: |
+          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/wpay-api@${{ steps.api.outputs.digest }}"
+          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/wpay-indexer@${{ steps.indexer.outputs.digest }}"
+          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/wpay-web@${{ steps.web.outputs.digest }}"
 
   migrate:
     needs: build-images
@@ -82,17 +97,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+      - uses: sigstore/cosign-installer@v3
       - name: Configure kubeconfig
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
+      - name: Verify image signatures
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for name in api indexer web; do
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${REPOSITORY}/.github/workflows/deploy.yml@.*" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "ghcr.io/${REGISTRY_OWNER}/wpay-${name}:${IMAGE_TAG}" > /dev/null
+          done
       - name: Helm upgrade
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
         run: |
           helm upgrade --install wpay helm/wpay \
             --namespace wpay --create-namespace \
-            --set image.registry=ghcr.io/${{ github.repository_owner }} \
-            --set image.tag=${{ inputs.image_tag }} \
+            --set image.registry="ghcr.io/${REGISTRY_OWNER}" \
+            --set image.tag="$IMAGE_TAG" \
             --set config.API_PUBLIC_URL=${{ vars.API_PUBLIC_URL }} \
             --set config.WEB_PUBLIC_URL=${{ vars.WEB_PUBLIC_URL }} \
             --wait --timeout 10m

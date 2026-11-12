@@ -14,56 +14,75 @@ an independent security audit and must not be described as one.
 ## Method
 
 Manual review of entry points and state transitions, `cargo test` (138 tests),
-TypeScript tests (38), build/typecheck of every package, Prisma schema
-validation, and static checks configured in CI (CodeQL, Trivy, gitleaks,
-dependency review). No fuzzing, formal verification, penetration test, or
-live-network test was performed.
+TypeScript tests (188 passed, 2 skipped), build/typecheck of every package,
+Prisma schema validation, API coverage (89.23% statements), a real Testnet
+deployment and payment, `cargo audit`, and static checks configured in CI
+(CodeQL, Trivy, gitleaks, dependency review). Locally executed: Gitleaks (no leaks), `pnpm
+audit --prod` (no known production advisories), Helm lint/template, kubeconform,
+Prometheus/Alertmanager config checks, and Docker image build. No fuzzing,
+formal verification, external penetration test, or mainnet test was performed.
 
 ## Findings
 
 ### High / needs action before production
 
-1. **Webhook delivery can reach internal addresses (SSRF).** Merchant-provided
-   URLs are fetched by the API worker without private-IP/host allowlisting.
-   Mitigate with an egress allowlist, DNS re-resolution checks, and blocking
-   `169.254.0.0/16`, `10/8`, `172.16/12`, `192.168/16`, `::1`, `fc00::/7`.
+1. **Webhook SSRF — fixed.** `apps/api/src/webhooks/url-guard.ts` resolves the
+   host, rejects private/reserved IPv4 and IPv6 ranges (including mapped and
+   embedded IPv4), blocks local hostnames and credentials in URLs, and blocks
+   redirects. It runs at registration and again at delivery; regression tests
+   cover both paths. `WEBHOOK_ALLOW_PRIVATE_TARGETS=1` is the deliberate local
+   test escape hatch.
 2. **Admin keys are centralized.** A single admin key can change fees up to the
    cap, pause, and propose upgrades. Use multisig/hardware wallets and a
-   timelock; the upgrade manager's delay must be configured explicitly.
+   timelock; the upgrade manager's delay must be configured explicitly. The
+   Testnet deployer is a throwaway single key and must not be reused.
 3. **Unaudited contracts handling funds.** No independent audit exists. Do not
    deploy to mainnet with real value without one.
 
 ### Medium
 
-4. **Rate limiting is per process.** With N replicas the effective limit is N×.
-   Move to a shared store (e.g. Redis) or enforce at the ingress.
-5. **Wallet challenge store is process-local.** Multi-replica deployments can
-   fail verification if the challenge is issued by one pod and verified by
-   another; use a shared store or sticky routing. Confirm single-use semantics
-   under concurrency.
-6. **Refund execution linkage is incomplete.** The API records approval, but
-   building the on-chain refund transaction requires the contract-assigned
-   refund id from the indexer. Until linked, approval is a record, not a
-   transaction. This is documented rather than faked.
+4. **Rate limiting across replicas — fixed when Redis is configured.**
+   `RedisRateLimitStore` is used when `REDIS_URL` is set; otherwise the API
+   logs a warning and falls back to per-process counters. Deployments must set
+   `REDIS_URL` or enforce limits at the ingress.
+5. **Wallet challenge store — fixed.** Challenges are persisted in the
+   `WalletNonce` table with expiry and single-use deletion, so any replica can
+   verify them.
+6. **Refund execution linkage — fixed for indexed refunds.** The indexer links
+   `requested` refund events to the record; approval then builds the contract
+   call. If the refund is not linked, or already on chain, the API returns
+   `409` instead of pretending to submit.
 7. **JWT storage in `localStorage`.** XSS would expose tokens. Consider httpOnly
    cookies with CSRF protection. Helmet is enabled and React escapes by default,
    but this remains a residual risk.
 8. **Broad extension host permission (`https://*/*`).** Narrow to your API host
    in production builds.
+9. **Browser wallet flow untested.** Freighter connect/sign/submit code paths
+   exist in checkout and admin/merchant dashboards, but there is no Playwright
+   suite or real-extension test in CI.
 
 ### Low / informational
 
-9. **Container hardening untested.** Read-only root filesystems are set for the
-   API/indexer; Next.js may need writable `.next/cache`. Validate at deploy time.
-10. **`SOROBAN_SOURCE_SECRET` in process env.** Prefer a signer service or HSM for
+10. **Container hardening untested at runtime.** The images build and the API
+    container passes a health smoke test as the non-root `node` user;
+    read-only root filesystems are set in Kubernetes but not exercised here.
+    Next.js may need a writable `.next/cache`.
+11. **`SOROBAN_SOURCE_SECRET` in process env.** Prefer a signer service or HSM for
     any automated flow.
-11. **Metrics and health are public.** They expose component status and counts;
+12. **Metrics and health are public.** They expose component status and counts;
     ensure no sensitive numbers are added.
-12. **Deployment files use placeholder hosts** (`example`, `wpay.example`); they
+13. **Deployment files use placeholder hosts** (`example`, `wpay.example`); they
     are templates and will not route real traffic.
-13. **Mobile bundle is large** (~1.27 MB, Stellar SDK). Code-splitting would help;
+14. **Mobile bundle is large** (~1.27 MB, Stellar SDK). Code-splitting would help;
     not a security issue.
-14. **No E2E browser tests**, so UI regressions are not caught by CI.
+15. **No E2E browser tests**, so UI regressions are not caught by CI.
+16. **Rust advisory (transitive).** `cargo audit` reports RUSTSEC-2026-0387
+    (timing variability in `crypto-bigint` 0.5.5), reached through
+    `soroban-env-host` 29.0.1 → `elliptic-curve` 0.13. The patched 0.7.x line is
+    not compatible with the current SDK, so CI pins an explicit ignore and the
+    advisory is re-checked on every SDK bump. It affects host-side cryptographic
+    operations, not contract logic authored here, but it is not currently
+    fixable without an upstream update.
 
 ## Verified properties
 
@@ -74,12 +93,24 @@ live-network test was performed.
 - API keys are stored hashed; plaintext is returned only at creation.
 - Webhook signatures are constant-time compared with a timestamp window.
 - API and frontends never report a payment settled without an on-chain result.
-- No secrets are committed; `.env.example` contains placeholders only.
+  Verified against Testnet: a bogus hash and a mismatched amount were rejected
+  and the invoice stayed `OPEN`.
+- No secrets are committed; `.env.example` contains placeholders only and
+  Gitleaks found no leaks in the tracked history.
 - `prisma validate` passes and the baseline migration matches the schema.
+- `pnpm audit --prod --audit-level=high` reports no known production
+  vulnerabilities after the zod 4 upgrade and transitive overrides.
+- `cargo audit` reports one transitive advisory (RUSTSEC-2026-0387) with no
+  compatible fixed release in the current Soroban SDK; it is ignored explicitly
+  in CI rather than hidden.
+- Contract WASM hashes match the 16 deployed Testnet contracts (16/16).
+- Kubernetes manifests pass kubeconform; Helm lint/template pass; Prometheus and
+  Alertmanager configurations validate.
 
 ## Conclusion
 
-The codebase is a coherent, tested foundation, but it is **not production-ready
-for real funds**. The three high findings plus an independent audit are
-prerequisites. Nothing in this repository should be read as evidence of a
-deployed or audited system.
+The codebase is a coherent, tested foundation with a verified Testnet
+deployment. It is **not production-ready for real funds**: the centralized admin
+key model and the absence of an independent audit remain prerequisites. The
+Testnet deployer is a throwaway key. Nothing in this repository should be read
+as evidence of a mainnet deployment or an external audit.

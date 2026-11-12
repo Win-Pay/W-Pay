@@ -18,16 +18,9 @@
     "contracts:fmt": "cargo fmt --manifest-path packages/contracts/Cargo.toml",
     "db:generate": "pnpm --filter @wpay/database generate",
     "db:migrate": "pnpm --filter @wpay/database migrate",
-    "db:seed": "pnpm --filter @wpay/database seed"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/client",
-      "prisma",
-      "esbuild",
-      "@nestjs/core",
-      "sharp"
-    ]
+    "db:seed": "pnpm --filter @wpay/database seed",
+    "db:backup": "bash scripts/db-backup.sh",
+    "db:restore-drill": "bash scripts/db-restore-drill.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

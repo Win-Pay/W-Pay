@@ -1,5 +1,5 @@
 # Build the API (NestJS) with the full pnpm workspace, then ship a slim runtime.
-FROM node:22-alpine AS base
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS base
 RUN corepack enable && corepack prepare pnpm@12.16.1 --activate
 WORKDIR /repo
 
@@ -21,6 +21,7 @@ COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/packages ./packages
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
+COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
 WORKDIR /repo/apps/api
 USER node
 EXPOSE 4000
