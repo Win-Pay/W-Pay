@@ -222,8 +222,15 @@ keyless OIDC, then verifies signatures before Helm upgrade.
   provider; the adapter and signing helpers are unit tested.
 - Real-wallet Testnet submission from the browser (the API-side Testnet E2E is
   recorded in `deployments/testnet-e2e.json`).
+- Real Freighter extension behaviour and any Mainnet operation.
+- Cluster deployment, live Prometheus scraping/alert delivery, Argo sync, image
+  signing and the deploy workflow, which require infrastructure credentials.
 - Long-running incident drills and chaos scenarios; backup/restore and encrypted
   backup round-trips are automated, but failover RTO/RPO is not measured.
-- A green GitHub Actions run. Remote runs were inspected and their setup failures
-  were fixed (lockfile/env tracking, Gitleaks license, Trivy tag); re-running
-  requires pushing the fix.
+
+GitHub Actions runs on commit `3b197b0` (2026-11-12) succeeded for both `CI`
+and `Security`: Soroban contracts, TypeScript workspace, Rust dependency audit,
+browser wallet flow, indexer/API container builds, k6 load test, CodeQL,
+Trivy and Gitleaks. Dependency review is a pull-request-only job and was
+skipped on the push. Image signing runs in the deploy workflow and was not
+executed.

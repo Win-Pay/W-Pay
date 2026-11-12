@@ -113,11 +113,12 @@ occurred.
   environment.
 - Docker Compose, Kubernetes manifests, Helm chart, Prometheus/Alertmanager and
   Argo CD manifests are present and validate locally.
-- **No successful remote CI run has been observed.** GitHub Actions runs were
-  inspected: the latest failed on an untracked `Cargo.lock`, an ignored
-  `.env.example`, the Gitleaks org license requirement and an invalid Trivy
-  action tag. Those workflow/tracking issues are fixed locally; a re-run requires
-  pushing this commit. Cluster apply and alert delivery were not exercised.
+- Remote `CI` and `Security` runs succeeded on commit `3b197b0` (2026-11-12):
+  Soroban contracts, TypeScript workspace, Rust dependency audit, browser wallet
+  flow, indexer/API container builds, k6 load test, CodeQL, Trivy and Gitleaks.
+  Dependency review is PR-only and image signing runs only in the deploy
+  workflow, which was not executed. Cluster apply and alert delivery were not
+  exercised.
 - The backend is not hosted; the Vercel frontends are static only and cannot
   process payments until an API and database are deployed.
 
@@ -130,9 +131,9 @@ occurred.
 4. Real-extension Playwright tests covering Freighter rejection/approval.
 5. Automatic settlement worker and a full reconciliation report (operator
    batch API exists).
-6. A green remote CI run after the workflow fixes are pushed, cluster
-   deployment, alert delivery, and measured production RTO/RPO (only logical
-   restore time is measured).
+6. Cluster deployment, alert delivery, image signing, and measured production
+   RTO/RPO (only logical restore time is measured). Remote `CI` and `Security`
+   are green.
 
 Until items 1-3 are complete, W-Pay is a verified Testnet prototype, not a
 production payment gateway.

@@ -66,7 +66,7 @@ not fully exercised; **open** = not implemented.
 | Soroban resource benchmarks | done | two `WPAY_BENCH` tests plus `pnpm measure:testnet` (RPC simulation and recorded transaction fees/sizes) |
 | Enforceable dependency checks | done | `pnpm audit --prod --audit-level=high` in CI; lockfile; transitive overrides |
 | Pin Docker digests and package-manager versions | done | base images and CI services pinned by digest; `packageManager` pinned in `package.json` |
-| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally; CodeQL, Trivy and dependency review configured in `security.yml`; cosign signing in `deploy.yml`. Remote runs previously failed on CI setup issues that are now fixed locally; no green remote run observed |
+| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally and in CI; CodeQL, Trivy and dependency review are configured in `security.yml`; cosign signing is in `deploy.yml`. `CI` and `Security` succeeded on commit `3b197b0` (2026-11-12). Dependency review is PR-only and image signing was not exercised |
 | Prepare contracts for independent audit | **partial** | tests, docs and recorded deployment exist; no independent audit has occurred |
 | Never claim an external audit | done | README, SECURITY, AUDIT and the final report state that none occurred |
 
@@ -103,5 +103,5 @@ not fully exercised; **open** = not implemented.
 2. Hosted backend with PITR and scheduled off-site upload of encrypted backups.
 3. Real-extension Playwright tests; current browser tests mock Freighter.
 4. Settlement batch worker and reconciliation report.
-5. Green remote CI after the workflow/tracking fixes are pushed, cluster deployment, alert delivery, and measured production RTO/RPO (only logical restore time is measured).
+5. Cluster deployment, alert delivery, image signing, and measured production RTO/RPO (only logical restore time is measured). Remote `CI` and `Security` are green.
 6. Mainnet deployment. None has occurred.

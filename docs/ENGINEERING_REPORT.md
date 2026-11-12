@@ -107,9 +107,13 @@ exercised beyond a build/health smoke test.
 
 Locally executed: Gitleaks (no leaks) and `pnpm audit --prod --audit-level=high`
 (no known production advisories after zod 4 and transitive overrides). Trivy,
-CodeQL and dependency review are configured in `security.yml`; no remote CI run
-is recorded in this workspace. Docker builds add provenance/SBOM and the deploy
-workflow signs images with cosign keyless OIDC and verifies signatures.
+CodeQL and dependency review are configured in `security.yml`. Remote `CI` and
+`Security` runs succeeded on commit `3b197b0` (2026-11-12), covering contract
+tests/build, typecheck/lint/tests, Rust audit, browser wallet flow, container
+builds, k6, CodeQL, Trivy and Gitleaks. Dependency review is PR-only and image
+signing runs only in the deploy workflow, which was not executed. Docker builds
+add provenance/SBOM and the deploy workflow signs images with cosign keyless
+OIDC and verifies signatures.
 
 ## 5. Deployment status
 
@@ -135,7 +139,5 @@ external audit exists.
 3. Playwright browser E2E against the real Freighter extension (mocked checkout flow exists).
 4. PITR and scheduled off-site upload (logical dump, optional encryption and restore drill are automated).
 5. Settlement batch worker and full reconciliation report.
-6. Remote CI runs have been inspected but none succeeded: the failures were an
-   untracked Cargo.lock, an ignored .env.example, the Gitleaks org license and an
-   invalid Trivy action tag. Those are fixed locally; a green re-run awaits a push.
-   Workflows, manifests and charts were validated locally.
+6. Remote CI is green, but cluster deployment, alert delivery, image signing
+   and production RTO/RPO remain unexercised.
