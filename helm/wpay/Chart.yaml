@@ -1,0 +1,6 @@
+apiVersion: v2
+name: wpay
+description: W-Pay Stellar payment gateway (API, indexer and web apps)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

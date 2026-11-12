@@ -1,0 +1,393 @@
+// W-Pay data model. On-chain state is the source of truth for money; these
+// tables are the operational projection (what the API can query fast) and are
+// reconciled from contract events by the indexer.
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" for local/CI, rhel build for the Vercel Lambda runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MERCHANT
+  OPERATOR
+  ADMIN
+}
+
+enum MerchantStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum PaymentStatus {
+  PENDING
+  SETTLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+enum EscrowStatus {
+  CREATED
+  FUNDED
+  RELEASED
+  REFUNDED
+  DISPUTED
+  RESOLVED
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  LAPSED
+}
+
+enum SettlementStatus {
+  OPEN
+  CLOSED
+  EXECUTED
+  CANCELLED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String
+  displayName    String?
+  stellarAddress String?   @unique
+  role           UserRole  @default(USER)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  apiKeys       ApiKey[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@index([role])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  merchantId String?
+  name       String
+  prefix     String    @unique
+  keyHash    String
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([merchantId])
+}
+
+model Merchant {
+  id                String         @id @default(cuid())
+  registryId        BigInt?        @unique
+  ownerUserId       String?
+  ownerAddress      String         @unique
+  settlementAddress String
+  name              String
+  feeBps            Int            @default(250)
+  status            MerchantStatus @default(PENDING)
+  website           String?
+  description       String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  payments          Payment[]
+  invoices          Invoice[]
+  escrows           Escrow[]
+  refunds           Refund[]
+  plans             SubscriptionPlan[]
+  webhooks          WebhookEndpoint[]
+  apiKeys           ApiKey[]
+  settlementWindows SettlementWindow[]
+  notifications     Notification[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  merchantId        String
+  payerAddress      String
+  token             String
+  amount            BigInt
+  fee               BigInt
+  net               BigInt
+  refunded          BigInt        @default(0)
+  status            PaymentStatus @default(PENDING)
+  memo              String?
+  txHash            String?       @unique
+  contractPaymentId BigInt?       @unique
+  ledger            Int?
+  createdAt         DateTime      @default(now())
+  settledAt         DateTime?
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  refunds  Refund[]
+  invoice  Invoice?
+
+  @@index([merchantId, createdAt])
+  @@index([payerAddress, createdAt])
+  @@index([status])
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  number        String        @unique
+  merchantId    String
+  token         String
+  amount        BigInt
+  memo          String?
+  status        InvoiceStatus @default(OPEN)
+  dueAt         DateTime
+  paidAt        DateTime?
+  paymentId     String?       @unique
+  customerEmail String?
+  createdAt     DateTime      @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  payment  Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, status])
+  @@index([dueAt, status])
+}
+
+model Escrow {
+  id               String       @id @default(cuid())
+  merchantId       String
+  payerAddress     String
+  payeeAddress     String
+  arbiterAddress   String
+  token            String
+  amount           BigInt
+  releaseAt        DateTime
+  status           EscrowStatus @default(CREATED)
+  contractEscrowId BigInt?      @unique
+  txHash           String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId, status])
+  @@index([payerAddress, createdAt])
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  paymentId     String
+  merchantId    String
+  payerAddress  String
+  amount        BigInt
+  reason        String
+  status        RefundStatus @default(PENDING)
+  txHash        String?
+  createdAt     DateTime     @default(now())
+  decidedAt     DateTime?
+
+  payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId, status])
+  @@index([paymentId])
+}
+
+model SubscriptionPlan {
+  id             String   @id @default(cuid())
+  merchantId     String
+  token          String
+  amount         BigInt
+  intervalSecs   Int
+  active         Boolean  @default(true)
+  planIdOnChain  BigInt?  @unique
+  createdAt      DateTime @default(now())
+
+  merchant      Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  subscriptions Subscription[]
+
+  @@index([merchantId, active])
+}
+
+model Subscription {
+  id             String             @id @default(cuid())
+  planId         String
+  subscriber     String
+  prepaid        BigInt             @default(0)
+  cyclesCharged  Int                @default(0)
+  nextDueAt      DateTime
+  status         SubscriptionStatus @default(ACTIVE)
+  contractSubId  BigInt?            @unique
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, subscriber])
+  @@index([nextDueAt, status])
+}
+
+model SettlementWindow {
+  id              String           @id @default(cuid())
+  merchantId      String?
+  token           String
+  periodStart     DateTime
+  periodEnd       DateTime
+  status          SettlementStatus @default(OPEN)
+  total           BigInt           @default(0)
+  windowIdOnChain BigInt?          @unique
+  txHash          String?
+  createdAt       DateTime         @default(now())
+  executedAt      DateTime?
+
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+}
+
+model WebhookEndpoint {
+  id         String   @id @default(cuid())
+  merchantId String
+  url        String
+  secret     String
+  events     String[]
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([merchantId, active])
+}
+
+model WebhookDelivery {
+  id             String                @id @default(cuid())
+  endpointId     String
+  event          String
+  payload        Json
+  status         WebhookDeliveryStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  responseStatus Int?
+  lastError      String?
+  nextAttemptAt  DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  deliveredAt    DateTime?
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  actorAddress String?
+  action       String
+  entity       String
+  entityId     String?
+  metadata     Json?
+  ip           String?
+  createdAt    DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+model IndexedEvent {
+  id          String   @id @default(cuid())
+  contractId  String
+  ledger      Int
+  txHash      String
+  eventIndex  Int
+  kind        String
+  payload     Json
+  processedAt DateTime @default(now())
+
+  @@unique([contractId, txHash, eventIndex])
+  @@index([contractId, ledger])
+  @@index([kind, ledger])
+}
+
+model IndexerCheckpoint {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  lastLedger Int
+  updatedAt  DateTime @updatedAt
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String?
+  merchantId String?
+  channel    String    @default("in_app")
+  title      String
+  body       String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, readAt])
+}
+
+model WalletNonce {
+  id        String    @id @default(cuid())
+  address   String
+  nonce     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([address, expiresAt])
+}
+
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  key          String
+  scope        String
+  requestHash  String
+  response     Json?
+  statusCode   Int?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+}

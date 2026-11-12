@@ -1,0 +1,11 @@
+{
+  "name": "W-Pay Mobile",
+  "short_name": "W-Pay",
+  "description": "Pay Stellar invoices from your wallet.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "orientation": "portrait",
+  "icons": []
+}

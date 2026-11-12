@@ -1,0 +1,23 @@
+.mobile-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 16px 48px;
+  min-height: 100vh;
+}
+.mobile-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.mobile-amount {
+  font-family: var(--wp-mono);
+  font-size: 34px;
+  margin: 8px 0;
+}
+.mobile-note {
+  font-size: 12px;
+  color: var(--wp-muted);
+  margin-top: 28px;
+  text-align: center;
+}

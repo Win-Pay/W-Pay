@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wpay.name" . }}-api
+  labels: {{- include "wpay.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "wpay.name" . }}-api
+  template:
+    metadata:
+      labels:
+        app: {{ include "wpay.name" . }}-api
+        {{- include "wpay.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: "{{ .Values.image.registry }}/wpay-api:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: {{ .Values.api.port }} }]
+          envFrom:
+            - configMapRef: { name: {{ include "wpay.name" . }}-config }
+            - secretRef: { name: {{ .Values.existingSecret }} }
+          readinessProbe:
+            httpGet: { path: /v1/health/ready, port: {{ .Values.api.port }} }
+          livenessProbe:
+            httpGet: { path: /v1/health, port: {{ .Values.api.port }} }
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wpay.name" . }}-api
+  labels: {{- include "wpay.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: {{ include "wpay.name" . }}-api
+  ports: [{ port: 80, targetPort: {{ .Values.api.port }} }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wpay.name" . }}-web
+  labels: {{- include "wpay.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "wpay.name" . }}-web
+  template:
+    metadata:
+      labels:
+        app: {{ include "wpay.name" . }}-web
+    spec:
+      containers:
+        - name: web
+          image: "{{ .Values.image.registry }}/wpay-web:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: {{ .Values.web.port }} }]
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: {{ .Values.config.API_PUBLIC_URL | quote }}
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wpay.name" . }}-web
+spec:
+  selector:
+    app: {{ include "wpay.name" . }}-web
+  ports: [{ port: 80, targetPort: {{ .Values.web.port }} }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wpay.name" . }}-indexer
+  labels: {{- include "wpay.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.indexer.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "wpay.name" . }}-indexer
+  template:
+    metadata:
+      labels:
+        app: {{ include "wpay.name" . }}-indexer
+    spec:
+      containers:
+        - name: indexer
+          image: "{{ .Values.image.registry }}/wpay-indexer:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: {{ .Values.indexer.port }} }]
+          envFrom:
+            - configMapRef: { name: {{ include "wpay.name" . }}-config }
+            - secretRef: { name: {{ .Values.existingSecret }} }
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.indexer.port }} }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 250m, memory: 256Mi }

@@ -1,0 +1,95 @@
+# Local development stack: Postgres, API, indexer and the three Next apps.
+# Secrets come from .env (never committed). This compose file is for local use
+# only; production runs on Kubernetes with secrets from a secret manager.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wpay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wpay_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-wpay}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wpay} -d ${POSTGRES_DB:-wpay}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wpay}:${POSTGRES_PASSWORD:-wpay_local_only}@postgres:5432/${POSTGRES_DB:-wpay}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ chars)}
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      API_PORT: 4000
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:4000}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
+      ADMIN_ADDRESSES: ${ADMIN_ADDRESSES:-}
+      SOROBAN_SOURCE_SECRET: ${SOROBAN_SOURCE_SECRET:-}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer:
+    build:
+      context: .
+      dockerfile: infra/docker/indexer.Dockerfile
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wpay}:${POSTGRES_PASSWORD:-wpay_local_only}@postgres:5432/${POSTGRES_DB:-wpay}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ chars)}
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      INDEXER_PORT: 4100
+      INDEXER_START_LEDGER: ${INDEXER_START_LEDGER:-1}
+    ports:
+      - "4100:4100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/next.Dockerfile
+      args:
+        APP: web
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  merchant-dashboard:
+    build:
+      context: .
+      dockerfile: infra/docker/next.Dockerfile
+      args:
+        APP: merchant-dashboard
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+
+  admin-dashboard:
+    build:
+      context: .
+      dockerfile: infra/docker/next.Dockerfile
+      args:
+        APP: admin-dashboard
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    ports:
+      - "3002:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

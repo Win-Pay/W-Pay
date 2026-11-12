@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>W-Pay</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --surface: #121a2e;
+        --border: #263252;
+        --text: #e8ecf7;
+        --muted: #93a0bd;
+        --primary: #5b8cff;
+        --danger: #e2566a;
+        --success: #2fbf83;
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+      }
+      h1 { font-size: 16px; margin: 0 0 10px; }
+      h1 span { color: var(--primary); }
+      label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+      input {
+        width: 100%;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #0e1526;
+        color: var(--text);
+        margin-bottom: 10px;
+      }
+      button {
+        width: 100%;
+        padding: 9px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: var(--primary);
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary { background: transparent; border-color: var(--border); color: var(--text); margin-top: 8px; }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 12px; }
+      .amount { font-family: ui-monospace, monospace; font-size: 22px; margin: 4px 0; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .error { color: var(--danger); margin-top: 8px; }
+      .ok { color: var(--success); margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>W<span>·</span>Pay</h1>
+    <label for="api">API base URL</label>
+    <input id="api" type="url" placeholder="https://api.wpay.example" />
+    <label for="number">Invoice number</label>
+    <input id="number" placeholder="INV-202611-ABC123" />
+    <button id="lookup">Look up invoice</button>
+    <div id="result" aria-live="polite"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

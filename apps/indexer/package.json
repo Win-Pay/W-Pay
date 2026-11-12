@@ -1,0 +1,27 @@
+{
+  "name": "@wpay/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint src",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1",
+    "@stellar/stellar-sdk": "^13.1.0",
+    "@wpay/config": "workspace:*",
+    "@wpay/database": "workspace:*",
+    "@wpay/types": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@wpay/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --port 5173",
+    "preview": "vite preview --port 5173",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint src",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@wpay/config": "workspace:*",
+    "@wpay/hooks": "workspace:*",
+    "@wpay/sdk": "workspace:*",
+    "@wpay/shared": "workspace:*",
+    "@wpay/types": "workspace:*",
+    "@wpay/ui": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

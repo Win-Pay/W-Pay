@@ -1,0 +1,42 @@
+groups:
+  - name: wpay-api
+    rules:
+      - alert: WPayApiDown
+        expr: up{job="wpay-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "W-Pay API is down"
+          description: "The API has been unreachable for 5 minutes. Payments cannot be created or confirmed."
+
+      - alert: WPayIndexerStale
+        expr: time() - wpay_indexer_last_run_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "W-Pay indexer has not completed a run in 5 minutes"
+          description: "Indexed payment state will drift from the chain until the indexer recovers."
+
+      - alert: WPayNoContractsConfigured
+        expr: wpay_contracts_configured == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No Soroban contracts are configured"
+          description: "The API can record intents but cannot build real transactions. Deploy contracts and set CONTRACT_*_ID."
+
+      - alert: WPayHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="wpay-api",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="wpay-api"}[5m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 5xx rate above 5%"
+          description: "Investigate API logs; payments may be failing."

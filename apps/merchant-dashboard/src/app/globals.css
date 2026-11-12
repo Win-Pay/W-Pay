@@ -1,0 +1,34 @@
+.dash-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.dash-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 24px 0 16px;
+  flex-wrap: wrap;
+}
+.dash-tab {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--wp-border);
+  background: transparent;
+  color: var(--wp-muted);
+  cursor: pointer;
+  font-size: 14px;
+}
+.dash-tab[data-active="true"] {
+  background: var(--wp-surface-2);
+  color: var(--wp-text);
+  border-color: var(--wp-primary);
+}
+.dash-login {
+  max-width: 420px;
+  margin: 80px auto;
+}

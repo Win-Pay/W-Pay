@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wpay-config
+  namespace: wpay
+data:
+  NODE_ENV: production
+  STELLAR_NETWORK: testnet
+  API_PORT: "4000"
+  API_PUBLIC_URL: https://api.wpay.example
+  WEB_PUBLIC_URL: https://pay.wpay.example
+  INDEXER_PORT: "4100"
+  LOG_LEVEL: info

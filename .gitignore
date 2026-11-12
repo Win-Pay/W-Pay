@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Rust
+packages/contracts/target/
+Cargo.lock
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local tooling
+.DS_Store
+*.log
+
+.vercel/
+.vercel
+.env*

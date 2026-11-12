@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wpay
+  namespace: wpay
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.wpay.example, pay.wpay.example]
+      secretName: wpay-tls
+  rules:
+    - host: api.wpay.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wpay-api
+                port:
+                  number: 80
+    - host: pay.wpay.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wpay-web
+                port:
+                  number: 80

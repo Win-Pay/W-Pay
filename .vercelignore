@@ -1,0 +1,10 @@
+.git
+node_modules
+**/node_modules
+.turbo
+**/.turbo
+**/.next
+packages/contracts/target
+coverage
+**/coverage
+*.log

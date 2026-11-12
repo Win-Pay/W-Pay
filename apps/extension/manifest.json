@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "W-Pay Invoice Helper",
+  "version": "0.1.0",
+  "description": "Look up W-Pay invoice status from any tab and copy a checkout link.",
+  "action": {
+    "default_title": "W-Pay",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://*/*", "http://localhost/*"]
+}

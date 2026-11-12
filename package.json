@@ -1,0 +1,39 @@
+{
+  "name": "wpay",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "contracts:build": "bash scripts/build-contracts.sh",
+    "contracts:test": "cargo test --manifest-path packages/contracts/Cargo.toml",
+    "contracts:fmt": "cargo fmt --manifest-path packages/contracts/Cargo.toml",
+    "db:generate": "pnpm --filter @wpay/database generate",
+    "db:migrate": "pnpm --filter @wpay/database migrate",
+    "db:seed": "pnpm --filter @wpay/database seed"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "prisma",
+      "esbuild",
+      "@nestjs/core",
+      "sharp"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "oxlint": "^0.15.5",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

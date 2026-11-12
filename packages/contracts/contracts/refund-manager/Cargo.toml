@@ -1,0 +1,20 @@
+[package]
+name = "wpay-refund-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+wpay-common = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+merchant-registry = { package = "wpay-merchant-registry", path = "../merchant-registry" }
+fee-manager = { package = "wpay-fee-manager", path = "../fee-manager" }
+payment-router = { package = "wpay-payment-router", path = "../payment-router" }

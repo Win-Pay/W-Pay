@@ -1,0 +1,37 @@
+image:
+  registry: ghcr.io/example
+  tag: latest
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 2
+  port: 4000
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+indexer:
+  replicas: 1
+  port: 4100
+
+web:
+  replicas: 2
+  port: 3000
+
+config:
+  STELLAR_NETWORK: testnet
+  API_PUBLIC_URL: https://api.wpay.example
+  WEB_PUBLIC_URL: https://pay.wpay.example
+
+ingress:
+  enabled: true
+  className: nginx
+  apiHost: api.wpay.example
+  webHost: pay.wpay.example
+
+existingSecret: wpay-secrets
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wpay-indexer
+  namespace: wpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wpay-indexer
+  template:
+    metadata:
+      labels:
+        app: wpay-indexer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: indexer
+          image: ghcr.io/example/wpay-indexer:latest
+          ports:
+            - containerPort: 4100
+          envFrom:
+            - configMapRef:
+                name: wpay-config
+            - secretRef:
+                name: wpay-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4100
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

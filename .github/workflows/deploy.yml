@@ -1,0 +1,100 @@
+name: Deploy
+
+# Manual, environment-gated release. Requires the `production` environment with
+# its own protection rules, and GHCR/KUBE credentials in environment secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (git SHA recommended)"
+        required: true
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/api.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/wpay-api:${{ inputs.image_tag }}
+      - name: Build and push indexer
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/indexer.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/wpay-indexer:${{ inputs.image_tag }}
+      - name: Build and push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/next.Dockerfile
+          build-args: |
+            APP=web
+            NEXT_PUBLIC_API_URL=${{ vars.API_PUBLIC_URL }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/wpay-web:${{ inputs.image_tag }}
+
+  migrate:
+    needs: build-images
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 12.16.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Apply migrations (backup first in the platform runbook)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pnpm db:migrate
+
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Helm upgrade
+        run: |
+          helm upgrade --install wpay helm/wpay \
+            --namespace wpay --create-namespace \
+            --set image.registry=ghcr.io/${{ github.repository_owner }} \
+            --set image.tag=${{ inputs.image_tag }} \
+            --set config.API_PUBLIC_URL=${{ vars.API_PUBLIC_URL }} \
+            --set config.WEB_PUBLIC_URL=${{ vars.WEB_PUBLIC_URL }} \
+            --wait --timeout 10m
+      - name: Smoke test
+        run: curl --fail --retry 10 --retry-delay 6 "${{ vars.API_PUBLIC_URL }}/v1/health"

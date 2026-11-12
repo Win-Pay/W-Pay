@@ -1,0 +1,30 @@
+{
+  "name": "@wpay/admin-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev -p 3002",
+    "start": "next start -p 3002",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint src",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf .next"
+  },
+  "dependencies": {
+    "@wpay/config": "workspace:*",
+    "@wpay/hooks": "workspace:*",
+    "@wpay/sdk": "workspace:*",
+    "@wpay/shared": "workspace:*",
+    "@wpay/types": "workspace:*",
+    "@wpay/ui": "workspace:*",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2"
+  }
+}

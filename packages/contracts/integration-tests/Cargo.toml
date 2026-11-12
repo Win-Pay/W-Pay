@@ -1,0 +1,21 @@
+[package]
+name = "wpay-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+fee-manager = { package = "wpay-fee-manager", path = "../contracts/fee-manager" }
+merchant-registry = { package = "wpay-merchant-registry", path = "../contracts/merchant-registry" }
+payment-router = { package = "wpay-payment-router", path = "../contracts/payment-router" }
+invoice-manager = { package = "wpay-invoice-manager", path = "../contracts/invoice-manager" }
+refund-manager = { package = "wpay-refund-manager", path = "../contracts/refund-manager" }
+treasury-vault = { package = "wpay-treasury-vault", path = "../contracts/treasury-vault" }
+emergency-pause = { package = "wpay-emergency-pause", path = "../contracts/emergency-pause" }
+price-oracle = { package = "wpay-price-oracle", path = "../contracts/price-oracle" }
+wpay-common = { workspace = true }

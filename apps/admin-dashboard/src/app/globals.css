@@ -1,0 +1,20 @@
+.admin-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.admin-login {
+  max-width: 420px;
+  margin: 80px auto;
+}
+.admin-xdr {
+  font-family: var(--wp-mono);
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: #0e1526;
+  border: 1px solid var(--wp-border);
+  border-radius: 8px;
+  padding: 10px;
+}

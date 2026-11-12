@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Soroban contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/contracts
+      - name: Format check
+        run: cargo fmt --all --manifest-path packages/contracts/Cargo.toml -- --check
+      - name: Unit and integration tests
+        run: cargo test --manifest-path packages/contracts/Cargo.toml
+      - name: Build WASM artifacts
+        run: bash scripts/build-contracts.sh
+      - name: Upload WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-wasm
+          path: packages/contracts/target/wasm32v1-none/release/*.wasm
+          if-no-files-found: error
+
+  javascript:
+    name: TypeScript workspace
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wpay
+          POSTGRES_PASSWORD: wpay
+          POSTGRES_DB: wpay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wpay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wpay:wpay@localhost:5432/wpay?schema=public
+      JWT_SECRET: ci-only-secret-that-is-long-enough-for-validation
+      STELLAR_NETWORK: testnet
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install (supply-chain policy enforced by pnpm-workspace allowBuilds)
+        run: pnpm install --frozen-lockfile
+      - name: Prisma generate and migrate
+        run: |
+          pnpm db:generate
+          pnpm --filter @wpay/database migrate
+      - name: Build
+        run: pnpm build
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Tests
+        run: pnpm test
+
+  docker:
+    name: Container build
+    runs-on: ubuntu-latest
+    needs: [javascript]
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: infra/docker/api.Dockerfile
+          - name: indexer
+            dockerfile: infra/docker/indexer.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

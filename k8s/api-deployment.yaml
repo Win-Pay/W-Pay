@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wpay-api
+  namespace: wpay
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wpay-api
+  template:
+    metadata:
+      labels:
+        app: wpay-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: ghcr.io/example/wpay-api:latest
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: wpay-config
+            - secretRef:
+                name: wpay-secrets
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wpay-api
+  namespace: wpay
+spec:
+  selector:
+    app: wpay-api
+  ports:
+    - port: 80
+      targetPort: 4000
