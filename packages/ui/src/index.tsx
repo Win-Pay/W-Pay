@@ -190,7 +190,54 @@ export function PageHeader(props: {
 export function Brand(): ReactNode {
   return (
     <span className="wp-brand">
-      W<span>·</span>Pay
+      <svg
+        className="wp-brand-mark"
+        viewBox="0 0 64 64"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <defs>
+          <linearGradient
+            id="wpay-brand-gradient"
+            x1="8"
+            y1="4"
+            x2="56"
+            y2="62"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0" stopColor="#5B8CFF" />
+            <stop offset="0.55" stopColor="#6E7BFF" />
+            <stop offset="1" stopColor="#8B5CF6" />
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#wpay-brand-gradient)" />
+        <rect
+          x="2.75"
+          y="2.75"
+          width="58.5"
+          height="58.5"
+          rx="15.25"
+          fill="none"
+          stroke="#ffffff"
+          strokeOpacity="0.22"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M15 21 24.5 45 32 30.5 39.5 45 49 21"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="5.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M49 8.5 50.5 11.7 53.7 13.2 50.5 14.7 49 17.9 47.5 14.7 44.3 13.2 47.5 11.7Z"
+          fill="#3EE8C0"
+        />
+      </svg>
+      <span className="wp-brand-word">
+        W<span className="wp-brand-accent">Pay</span>
+      </span>
     </span>
   );
 }

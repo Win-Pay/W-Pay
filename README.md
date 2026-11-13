@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/wpay-mark.svg" width="88" height="88" alt="WPay logo" />
+</p>
+
 # W-Pay
 
 W-Pay is a Stellar/Soroban-native payment gateway: merchants accept payments,

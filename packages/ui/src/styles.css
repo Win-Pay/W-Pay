@@ -273,13 +273,30 @@ a:hover {
   gap: 16px;
 }
 .wp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55em;
   font-weight: 800;
   letter-spacing: -0.02em;
   font-size: 18px;
+  line-height: 1;
   color: var(--wp-text);
+  vertical-align: middle;
 }
-.wp-brand span {
-  color: var(--wp-primary);
+.wp-brand-mark {
+  width: 1.62em;
+  height: 1.62em;
+  flex: none;
+  filter: drop-shadow(0 2px 8px rgba(91, 140, 255, 0.35));
+}
+.wp-brand-word {
+  font-size: 1.06em;
+}
+.wp-brand-accent {
+  background: linear-gradient(90deg, #7fa6ff, #3ee8c0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 @media (max-width: 640px) {
