@@ -13,9 +13,12 @@ TypeScript SDK.
 > ([web](https://wpay-web.vercel.app),
 > [merchant](https://wpay-merchant.vercel.app),
 > [admin](https://wpay-admin.vercel.app)) cannot log in or take payments until
-> `NEXT_PUBLIC_API_URL` points at a deployed backend. See
-> [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and transaction
-> hashes, and [docs/VERCEL.md](docs/VERCEL.md) for the exact frontend settings.
+> `NEXT_PUBLIC_API_URL` points at a deployed backend. The currently hosted
+> bundles predate the fail-closed change and still fall back to
+> `localhost:4000`; the source in this repository renders a configuration error
+> and requires a redeploy. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified
+> contract ids and transaction hashes, and [docs/VERCEL.md](docs/VERCEL.md) for
+> the exact frontend settings.
 
 ## Live deployments
 
@@ -36,15 +39,15 @@ the contracts.
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented: auth with rotating refresh tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 136 tests including real Postgres integration |
+| REST API (NestJS) | Implemented: auth with HttpOnly refresh cookies, CSRF headers and rotating tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 145 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests |
 | Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
-| Customer checkout | Invoice lookup, wallet connect, signed Soroban payment submission, backend-verified confirmation only |
+| Customer checkout | Invoice lookup, merchant branding, transparent fee split, wallet connect/disconnect, signed Soroban payment, progress and receipt with Explorer link; success only after backend verification. A separate `/landing` page presents the product |
 | Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
 | Admin dashboard | Email or wallet login, health, merchant approval/suspension, emergency pause intents, audit log, indexer failures, treasury withdrawals, settlement batches |
 | Mobile PWA | Read-only invoice lookup and payment-link sharing |
-| Browser extension (MV3) | Invoice lookup popup and checkout-link copying |
+| Browser extension (MV3) | Invoice lookup popup and checkout-link copying; host access is requested per configured API origin (`optional_host_permissions`) |
 | Infrastructure | Docker images, development and production Compose, Caddy HTTPS, Kubernetes manifests, Helm chart, Prometheus/Alertmanager/Grafana, Argo CD, CI + security workflows |
 
 ## What is not implemented / not verified
@@ -55,14 +58,15 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
 - **Testnet only.** No mainnet deployment, no real funds, no external audit.
   The Testnet deployer is a throwaway friendbot-funded key, not multisig.
 - The API, Postgres, Redis and indexer are not hosted; they run locally or via
-  Docker Compose. The hosted Vercel pages show a configuration error until
-  `NEXT_PUBLIC_API_URL` is set and the backend is deployed.
+  Docker Compose. The currently hosted Vercel bundles still point at
+  `localhost:4000`; rebuild them with `NEXT_PUBLIC_API_URL` after the backend is
+  deployed.
 - The historical Testnet payment (`db354f7f…e47d`) proves on-chain settlement and
   fee splitting. Its memo was `e2e-invoice`, so after invoice-number memo
   binding it no longer qualifies as an invoice-level confirmation replay.
-- Wallet flows are implemented with Freighter connect/sign/submit. Three
-  Playwright checkout tests mock the provider and API; real-extension signing is
-  not covered by CI.
+- Wallet flows are implemented with Freighter connect/sign/submit. Five
+  Playwright tests mock the provider and API (checkout, fee disclosure, failed
+  submission and the landing page); real-extension signing is not covered by CI.
 - The mobile app is a read-only PWA (no wallet signing), and the extension does
   not sign transactions.
 - Refund approval builds an on-chain transaction only after the indexer has
@@ -143,10 +147,11 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 199 passed, 2 skipped (api 136, indexer 27, sdk 12, shared 10, e2e 10, database 4) |
+| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 209 passed, 2 skipped (api 145, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
 | API coverage | `pnpm --filter @wpay/api test:coverage` | 89.4% statements, 71.12% branches, 92.48% functions; payments 90.03%, invoices 91.95%, operations 91.49%, auth 90.76%, platform 91.97% |
-| Browser tests | `pnpm test:browser` | 3 passed (mocked Freighter + API) |
-| Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, refresh rotation/reuse revocation, merchant ownership 403 |
+| Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
+| Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
+| Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
@@ -166,12 +171,22 @@ claim is limited to the recorded Testnet transactions in
 - API auth supports JWT, scoped API keys (`sha256`, prefix-indexed), and Stellar
   wallet signature verification (challenge/response, raw or SEP-53).
 - Refresh tokens are opaque, stored as SHA-256 hashes, rotated on every use, and
-  reused-token detection revokes the whole token family.
+  reused-token detection revokes the whole token family. They are delivered as
+  `HttpOnly`, `Secure` cookies scoped to `/v1/auth`; refresh and logout require a
+  matching `x-csrf-token`. Access and CSRF tokens live in memory only, and
+  state-changing requests from unlisted browser origins are rejected.
+- Production refuses to boot with a placeholder JWT secret, non-HTTPS public
+  URLs, or without `REDIS_URL` (unless `ALLOW_IN_MEMORY_RATE_LIMIT=1` is set
+  deliberately); `trust proxy` defaults to one hop so rate limits key on the
+  client address.
 - Self-service merchants cannot choose their own fee rate; only ADMIN/OPERATOR
   accounts may override the platform default (250 bps).
 - Payment and invoice confirmation verifies the contract invocation arguments,
   memo and emitted event before changing database state.
 - Webhooks are HMAC-SHA256 signed over `timestamp.body` with replay tolerance.
+- All three Next apps send CSP, `X-Frame-Options: DENY`, nosniff,
+  referrer-policy and permissions-policy headers in production. The browser
+  extension requests host access only for the API origin the user configures.
 
 Please read [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 Do not open public issues for vulnerabilities.

@@ -21,10 +21,20 @@ this page explains semantics and defaults. Never commit real values.
 | `CORS_ORIGINS` | empty | Extra comma-separated browser origins; production does not add localhost automatically |
 | `JWT_EXPIRES_IN` | `1h` | Access-token lifetime (`30m`, `1h`, `1d`, …) |
 | `JWT_REFRESH_TTL_DAYS` | `30` | Refresh-token lifetime in days |
+| `REDIS_URL` | empty locally, **required in production** | Shared rate-limit counters; the API refuses to boot in production without it |
+| `ALLOW_IN_MEMORY_RATE_LIMIT` | `0` | Set to `1` only for a deliberate single-replica production deployment |
+| `TRUST_PROXY` | `1` in production, `0` locally | Express trust-proxy hop count; required so `request.ip` is the client behind Caddy/ingress |
+| `REFRESH_COOKIE_SAMESITE` | `none` in production, `lax` locally | SameSite mode for refresh/CSRF cookies; `none` requires cross-site frontends |
+| `COOKIE_DOMAIN` | empty | Optional parent domain for first-party cookies |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP quota; Redis-backed when `REDIS_URL` is set |
 | `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `ADMIN_ADDRESSES` | empty | Comma-separated `G...` addresses granted admin on login |
 | `SOROBAN_SOURCE_SECRET` | empty | Only for automated flows; never commit |
+
+Production boot is fail-closed: `API_PUBLIC_URL`, `WEB_PUBLIC_URL` and
+`CORS_ORIGINS` must be HTTPS non-placeholder hosts, `JWT_SECRET` must not
+contain a template value, and Redis must be configured. The API exits with a
+configuration error instead of starting degraded.
 
 ## Contract ids
 
@@ -70,6 +80,19 @@ The API returns `networkPassphrase` and `contractId` inside every transaction
 intent, so the browser does not need `NEXT_PUBLIC_STELLAR_NETWORK`,
 `NEXT_PUBLIC_STELLAR_RPC_URL` or `NEXT_PUBLIC_CONTRACT_ID`. Those values stay
 server-side in `STELLAR_NETWORK`, `STELLAR_RPC_URL` and `CONTRACT_*_ID`.
+
+Browser apps keep the access token and CSRF token in memory only. The rotating
+refresh token is an `HttpOnly`, `Secure` cookie, so a reload calls
+`GET /auth/csrf` and then re-exchanges the cookie. Cross-site Vercel frontends
+need `REFRESH_COOKIE_SAMESITE=none` (the production default); third-party cookie
+blocking can still affect them, so a first-party layout
+(`app.example.com` + `api.example.com`) with `COOKIE_DOMAIN` and
+`SameSite=Lax` is preferred. Do not put API origins behind a wildcard: the API
+checks the exact browser origin on state-changing requests.
+
+The Next.js production builds also set a Content-Security-Policy whose
+`connect-src` includes the `NEXT_PUBLIC_API_URL` origin. Setting the variable at
+build time is therefore required for API calls as well as for the UI.
 
 ## Secrets management
 

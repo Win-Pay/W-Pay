@@ -26,9 +26,16 @@ infrastructure you operate without following this repository's guidance.
 - Health and metrics endpoints are public but expose no secrets.
 - Webhook URLs are resolved and blocked if they point at private/reserved
   addresses; redirects are refused. Registration and delivery both check.
-- Rate limits use Redis when `REDIS_URL` is set; otherwise the API warns and
-  falls back to per-process counters.
-- CORS in production allows only `WEB_PUBLIC_URL` plus explicit `CORS_ORIGINS`.
+- Refresh tokens are `HttpOnly`, `Secure` cookies scoped to `/v1/auth`, rotated
+  on use, hashed at rest and grouped into revocable families. Access and CSRF
+  tokens live in memory. Refresh and logout require a matching `x-csrf-token`.
+- State-changing requests from an unlisted browser `Origin` are rejected.
+- Rate limits use Redis; production refuses to boot without `REDIS_URL` unless
+  `ALLOW_IN_MEMORY_RATE_LIMIT=1` is set deliberately.
+- `trust proxy` defaults to one hop in production so limits key on the client,
+  not the ingress address.
+- CORS in production allows only `WEB_PUBLIC_URL`, `API_PUBLIC_URL` and explicit
+  `CORS_ORIGINS`.
 - Readiness fails when Postgres or Soroban RPC is unreachable.
 - Indexer projection failures are retained as dead letters, retried and surfaced
   to admins; ambiguous events are never guessed.
@@ -48,9 +55,13 @@ See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and the findings section of
 - contract admin keys are powerful (fee cap, pause, upgrade proposals); the
   proposed 2-of-3 multisig/HSM/timelock design is in
   [docs/KEY_MANAGEMENT.md](docs/KEY_MANAGEMENT.md) and has not been executed;
-- JWT tokens are stored in `localStorage` in the dashboards;
+- refresh tokens are `HttpOnly`, `Secure` cookies with `SameSite=None` by
+  default in production and CSRF headers on refresh/logout; cross-site
+  frontends remain subject to browser third-party-cookie policy, so a
+  first-party cookie domain is preferred;
 - browser checkout tests mock Freighter; real-extension signing is untested;
-- the browser extension requests broad host permissions;
+- the browser extension asks for the single configured API origin at lookup
+  time, but that permission request path is not exercised by CI;
 - no external audit, no formal verification, no mainnet deployment;
 - `cargo audit` reports RUSTSEC-2026-0387 in `crypto-bigint` 0.5.5, reached via
   `soroban-env-host` 29.0.1. There is no compatible patched release yet; CI

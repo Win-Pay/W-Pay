@@ -21,6 +21,7 @@ import {
   type CreateInvoiceInput,
   type InvoiceRecord,
   type PayInvoiceIntentInput,
+  type PublicInvoiceRecord,
   type TransactionIntent,
 } from "@wpay/types";
 import { clampPageSize, splitAmount } from "@wpay/config";
@@ -149,10 +150,24 @@ export class InvoicesService {
   }
 
   /** Public checkout view: no merchant-internal fields. */
-  async publicInvoice(number: string): Promise<InvoiceRecord> {
-    const row = await this.prisma.invoice.findUnique({ where: { number } });
+  async publicInvoice(number: string): Promise<PublicInvoiceRecord> {
+    const row = await this.prisma.invoice.findUnique({
+      where: { number },
+      include: { merchant: true },
+    });
     if (!row) throw new NotFoundException("invoice not found");
-    return { ...toInvoiceRecord(row), customerEmail: null, paymentId: null };
+    const { fee, net } = splitAmount(row.amount, row.merchant.feeBps);
+    return {
+      ...toInvoiceRecord(row),
+      customerEmail: null,
+      paymentId: null,
+      merchantName: row.merchant.name,
+      merchantWebsite: row.merchant.website,
+      merchantDescription: row.merchant.description,
+      feeBps: row.merchant.feeBps,
+      fee: fee.toString(),
+      net: net.toString(),
+    };
   }
 
   async cancel(user: AuthUser, id: string): Promise<InvoiceRecord> {

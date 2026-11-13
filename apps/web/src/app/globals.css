@@ -1,22 +1,119 @@
 .checkout-shell {
-  max-width: 560px;
+  max-width: 620px;
   margin: 40px auto;
 }
 .checkout-brand {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
-.checkout-hero h1 {
-  font-size: 30px;
-  margin: 0 0 6px;
-  letter-spacing: -0.03em;
+.checkout-link {
+  font-size: 13px;
+}
+.checkout-gap {
+  margin-top: 16px;
+}
+.checkout-gap-sm {
+  margin-top: 12px;
+}
+.checkout-steps {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  flex-wrap: wrap;
+}
+.checkout-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--wp-border);
+  border-radius: 999px;
+  color: var(--wp-muted);
+  font-size: 12px;
+  background: var(--wp-surface);
+}
+.checkout-steps li[data-done="true"] {
+  color: var(--wp-text);
+  border-color: var(--wp-success);
+}
+.checkout-steps li[data-done="true"] span {
+  color: var(--wp-success);
+}
+.checkout-merchant {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--wp-border);
+  margin-bottom: 16px;
+}
+.checkout-merchant > :last-child {
+  margin-left: auto;
+}
+.checkout-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--wp-primary), #8f6bff);
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+}
+.checkout-amount-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 .checkout-amount {
   font-family: var(--wp-mono);
-  font-size: 40px;
-  margin: 12px 0 2px;
+  font-size: 38px;
+  line-height: 1.15;
+  margin: 6px 0 2px;
+  letter-spacing: -0.03em;
+}
+.checkout-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  text-align: right;
+}
+.checkout-meta > div,
+.checkout-meta span {
+  display: block;
+}
+.checkout-breakdown {
+  margin: 18px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--wp-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+.checkout-breakdown > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.checkout-breakdown dt {
+  color: var(--wp-muted);
+}
+.checkout-breakdown dd {
+  margin: 0;
+  font-family: var(--wp-mono);
+  text-align: right;
+  word-break: break-all;
 }
 .checkout-actions {
   display: flex;
@@ -24,9 +121,184 @@
   gap: 10px;
   margin-top: 20px;
 }
+.checkout-wallet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--wp-border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--wp-surface-2);
+}
+.checkout-explorer {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 13px;
+}
 .checkout-footer {
   margin-top: 24px;
   font-size: 12px;
   color: var(--wp-muted);
   text-align: center;
+}
+.checkout-footer a {
+  color: var(--wp-muted);
+  text-decoration: underline;
+}
+
+/* Landing page */
+.landing-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.landing-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+.landing-hero {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 48px 24px 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 40px;
+  align-items: center;
+}
+.landing-hero h1 {
+  font-size: clamp(34px, 5vw, 54px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  margin: 12px 0 16px;
+}
+.landing-hero p {
+  color: var(--wp-muted);
+  font-size: 18px;
+  max-width: 56ch;
+}
+.landing-cta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+.landing-cta a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: var(--wp-radius-sm);
+  border: 1px solid transparent;
+  background: var(--wp-primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+}
+.landing-cta a.secondary {
+  background: transparent;
+  border-color: var(--wp-border);
+  color: var(--wp-text);
+}
+.landing-cta a:hover {
+  text-decoration: none;
+  background: var(--wp-primary-strong);
+}
+.landing-cta a.secondary:hover {
+  background: var(--wp-surface-2);
+}
+.landing-preview {
+  border: 1px solid var(--wp-border);
+  border-radius: 16px;
+  padding: 20px;
+  background: linear-gradient(180deg, var(--wp-surface) 0%, #0d1426 100%);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+}
+.landing-preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--wp-border);
+  font-size: 14px;
+}
+.landing-preview-row:last-child {
+  border-bottom: 0;
+}
+.landing-preview-amount {
+  font-family: var(--wp-mono);
+  font-size: 30px;
+  margin: 12px 0;
+}
+.landing-section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+.landing-section h2 {
+  font-size: 28px;
+  letter-spacing: -0.03em;
+  margin: 0 0 8px;
+}
+.landing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+.landing-card {
+  border: 1px solid var(--wp-border);
+  border-radius: var(--wp-radius);
+  padding: 20px;
+  background: var(--wp-surface);
+}
+.landing-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.landing-card p {
+  margin: 0;
+  color: var(--wp-muted);
+  font-size: 14px;
+}
+.landing-status {
+  max-width: 1120px;
+  margin: 0 auto 48px;
+  padding: 0 24px;
+}
+.landing-footer {
+  border-top: 1px solid var(--wp-border);
+  padding: 28px 24px;
+  color: var(--wp-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.landing-footer a {
+  color: var(--wp-muted);
+  text-decoration: underline;
+}
+
+@media (max-width: 820px) {
+  .landing-hero {
+    grid-template-columns: 1fr;
+    padding-top: 24px;
+  }
+  .checkout-shell {
+    margin: 20px auto;
+  }
+  .checkout-amount {
+    font-size: 32px;
+  }
+  .checkout-meta {
+    text-align: left;
+  }
 }

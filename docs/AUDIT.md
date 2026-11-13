@@ -14,10 +14,10 @@ an independent security audit and must not be described as one.
 ## Method
 
 Manual review of entry points and state transitions, `cargo test` (140 tests,
-including two resource benchmarks), TypeScript tests (199 passed, 2 skipped),
-three Playwright checkout tests with a mocked wallet, build/typecheck of every
-package, Prisma schema validation, API coverage (89.4% statements), a real
-Testnet deployment and payment, a Testnet RPC/Horizon resource measurement,
+including two resource benchmarks), TypeScript tests (209 passed, 2 skipped),
+five Playwright tests with a mocked wallet, build/typecheck of every package,
+Prisma schema validation, API coverage (89.4% statements), a real Testnet
+deployment and payment, a Testnet RPC/Horizon resource measurement,
 `cargo audit`, and static checks configured in CI (CodeQL, Trivy, gitleaks,
 dependency review). Locally executed: Gitleaks (no leaks), `pnpm
 audit --prod` (no known production advisories), Helm lint/template, kubeconform,
@@ -52,6 +52,16 @@ formal verification, external penetration test, or mainnet test was performed.
 - **Wallet login replay — fixed.** SEP-53 challenges are single-use rows in
   `WalletNonce` with expiry, so a captured signature cannot be replayed and any
   replica can verify it.
+- **Persisted credentials — removed.** Access and CSRF tokens live in memory
+  only. The rotating refresh token is an `HttpOnly`, `Secure` cookie scoped to
+  `/v1/auth`, rotated on use with a single-flight guard, and refresh/logout
+  require a matching `x-csrf-token`. State-changing requests from an unlisted
+  browser `Origin` are rejected.
+- **Extension host access — narrowed.** The manifest requests origin access only
+  when a lookup is performed, instead of `https://*/*` at install time.
+- **Browser hardening — added.** Production builds serve CSP,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy` and a restrictive `Permissions-Policy`.
 
 ### High / needs action before production
 
@@ -72,10 +82,10 @@ formal verification, external penetration test, or mainnet test was performed.
 
 ### Medium
 
-4. **Rate limiting across replicas — fixed when Redis is configured.**
-   `RedisRateLimitStore` is used when `REDIS_URL` is set; otherwise the API
-   logs a warning and falls back to per-process counters. Deployments must set
-   `REDIS_URL` or enforce limits at the ingress.
+4. **Rate limiting across replicas — fixed.** `RedisRateLimitStore` is used when
+   `REDIS_URL` is set, and production refuses to boot without it unless
+   `ALLOW_IN_MEMORY_RATE_LIMIT=1` is explicitly set. `trust proxy` defaults to
+   one hop in production so counters key on the client, not the ingress.
 5. **Wallet challenge store — fixed.** Challenges are persisted in the
    `WalletNonce` table with expiry and single-use deletion, so any replica can
    verify them.
@@ -83,15 +93,21 @@ formal verification, external penetration test, or mainnet test was performed.
    `requested` refund events to the record; approval then builds the contract
    call. If the refund is not linked, or already on chain, the API returns
    `409` instead of pretending to submit.
-7. **JWT storage in `localStorage`.** XSS would expose tokens. Consider httpOnly
-   cookies with CSRF protection. Helmet is enabled and React escapes by default,
-   but this remains a residual risk.
-8. **Broad extension host permission (`https://*/*`).** Narrow to your API host
-   in production builds.
-9. **Real browser wallet flow untested.** The checkout now has three Playwright
-   tests with a mocked Freighter provider and mocked API, covering missing
-   wallet, single submission and failed submission. The real extension, user
-   rejection and real Testnet signing are still not exercised by CI.
+7. **Session storage — mitigated.** Access and CSRF tokens live in memory only.
+   The rotating refresh token is an `HttpOnly`, `Secure` cookie scoped to
+   `/v1/auth` and is not readable by JavaScript; refresh and logout require a
+   matching `x-csrf-token`, tokens are rotated and reuse revokes the whole
+   family. `SameSite` defaults to `None` for cross-site frontends and can be
+   `Lax` with a first-party `COOKIE_DOMAIN`; cross-site refresh still depends on
+   browser third-party-cookie policy, so a first-party cookie domain is
+   preferred. Helmet and CSP remain defence in depth.
+8. **Extension host permission — fixed.** The MV3 manifest no longer requests
+   `https://*/*`; it uses `optional_host_permissions` and asks for the single
+   configured API origin when the user performs a lookup.
+9. **Real browser wallet flow untested.** Five Playwright tests cover checkout,
+   fee disclosure, receipt/Explorer link, failed submission and the landing
+   page with a mocked Freighter provider and mocked API. The real extension,
+   user rejection and real Testnet signing are still not exercised by CI.
 10. **Settlement execution is budget-bounded.** A 50-entry
     `settlement.execute` exceeded the local Soroban test-host budget in
     `auth.rs`; the API caps batches at 20 entries. The 20-entry benchmark uses

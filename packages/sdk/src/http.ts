@@ -21,6 +21,8 @@ export interface ApiClientOptions {
   token?: string;
   apiKey?: string;
   fetchImpl?: FetchLike;
+  /** Send the httpOnly refresh/CSRF cookies; defaults to `include`. */
+  credentials?: RequestCredentials;
   /** Retries only idempotent requests (GET/HEAD) and 5xx/network failures. */
   maxRetries?: number;
   timeoutMs?: number;
@@ -47,6 +49,7 @@ export class HttpClient {
   private apiKey?: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
+  private readonly credentials: RequestCredentials;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
   private onUnauthorized?: () => Promise<string | null>;
@@ -56,6 +59,7 @@ export class HttpClient {
     this.token = options.token;
     this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.credentials = options.credentials ?? "include";
     this.maxRetries = options.maxRetries ?? 2;
     this.timeoutMs = options.timeoutMs ?? 20_000;
     this.onUnauthorized = options.onUnauthorized;
@@ -147,6 +151,7 @@ export class HttpClient {
       return await this.fetchImpl(url, {
         method,
         headers,
+        credentials: this.credentials,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });

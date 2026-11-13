@@ -11,18 +11,28 @@ same pnpm workspace:
 
 They are currently frontend-only deployments. No Vercel token or backend host
 was available in this workspace, so linking the projects to a live API was not
-performed. The configuration below is ready to apply.
+performed. A bundle inspection on 2026-11-13 confirmed the hosted builds predate
+the fail-closed change and still fall back to `http://localhost:4000`; they must
+be rebuilt after `NEXT_PUBLIC_API_URL` is set. The configuration below is ready
+to apply.
 
 ## 1. Deploy the backend first
 
 The browser apps need a public HTTPS API origin. Follow
-[DEPLOYMENT.md](DEPLOYMENT.md) (Compose or Kubernetes). The API must allow all
-three production origins:
+[DEPLOYMENT.md](DEPLOYMENT.md) (Compose or Kubernetes). Production requires
+`API_PUBLIC_URL`/`WEB_PUBLIC_URL` to be real HTTPS origins and requires
+`REDIS_URL`; the API must allow all three frontend origins:
 
 ```env
+API_PUBLIC_URL=https://api.example.com
 WEB_PUBLIC_URL=https://wpay-web.vercel.app
 CORS_ORIGINS=https://wpay-web.vercel.app,https://wpay-merchant.vercel.app,https://wpay-admin.vercel.app
 ```
+
+Cross-site refresh cookies default to `SameSite=None; Secure`. If the browser
+blocks third-party cookies, serve the API on a first-party subdomain and set
+`COOKIE_DOMAIN` and `REFRESH_COOKIE_SAMESITE=lax` instead. Set `TRUST_PROXY` to
+the ingress hop count (default `1`).
 
 Verify before touching Vercel:
 
@@ -88,6 +98,8 @@ error rather than calling localhost.
 ## 5. Verify
 
 1. Open the checkout URL with an invoice: `https://wpay-web.vercel.app/?invoice=INV-…`.
+2. Open `https://wpay-web.vercel.app/landing` and confirm the landing page
+   renders and links back to `/` without replacing checkout.
 2. Sign in on the merchant dashboard with an email account or Freighter wallet;
    the onboarding card appears for a wallet with no merchant.
 3. Sign in on the admin dashboard with an ADMIN/OPERATOR account.

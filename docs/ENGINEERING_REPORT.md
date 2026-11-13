@@ -49,7 +49,7 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 | `cargo fmt --all --manifest-path packages/contracts/Cargo.toml -- --check` | clean |
 | `pnpm contracts:build` | **16/16 WASM artifacts** (20–41 KB) |
 | `pnpm typecheck` | **22/22 tasks** pass |
-| `pnpm test` | **199 passed, 2 skipped** (api 136, indexer 27, sdk 12, shared 10, e2e 10, database 4) |
+| `pnpm test` | **209 passed, 2 skipped** (api 145, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
 | `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings after removing an unused declaration |
 | `pnpm build` | 15/15 tasks: api, indexer, web, merchant, admin, mobile, extension |
 | `prisma validate` / `generate` | pass |
@@ -60,7 +60,7 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Gitleaks | no leaks in tracked history |
 | Docker API image | built; container `/v1/health` returns `database: "up"` and `/v1/health/ready` returns 200 |
-| `pnpm test:browser` | 3 Playwright checkout tests pass (mocked wallet/API) |
+| `pnpm test:browser` | 5 Playwright checkout/landing tests pass (mocked wallet/API) |
 | `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 min resource fee, 1,840-byte assembled envelope |
 | Helm / kubeconform / Prometheus / Alertmanager | lint, template and schema/config checks pass |
 | `scripts/db-restore-drill.sh` | restored row counts match source for core and new tables; encrypted round-trip passed; local restore ~1s |
@@ -109,10 +109,24 @@ at registration and delivery), per-replica rate limiting (Redis store), and the
 challenge store (previously process-local; now persisted in the `WalletNonce`
 table and verifiable from any replica).
 
+Fixed during the final integration pass: access tokens moved out of persistent
+storage (memory-only, refresh token rotated with a single-flight guard), the
+extension switched to per-origin optional host permissions, all Next apps now
+send production security headers, and checkout gained merchant/fee disclosure,
+progress, receipts and Explorer links plus a separate `/landing` page.
+
+Fixed during the live-backend hardening pass: the refresh token moved from
+`localStorage` to an `HttpOnly`, `Secure` cookie scoped to `/v1/auth` with a
+CSRF header on refresh/logout and origin rejection for unlisted browsers;
+production boot is fail-closed on placeholder secrets/URLs and missing Redis;
+`trust proxy` keys rate limits on the client; and webhook attempts use an atomic
+timestamp-conditional claim so concurrent workers cannot double-deliver.
+
 Open, documented in `docs/AUDIT.md`: centralized admin keys (the Testnet
-deployer is a throwaway single key), unaudited contracts handling funds, JWT in
-`localStorage`, broad extension host permissions, and container hardening not
-exercised beyond a build/health smoke test.
+deployer is a throwaway single key), unaudited contracts handling funds,
+cross-site refresh cookies depending on browser third-party-cookie policy, and
+container hardening not exercised beyond the production image health/readiness
+smoke test.
 
 Locally executed: Gitleaks (no leaks) and `pnpm audit --prod --audit-level=high`
 (no known production advisories after zod 4 and transitive overrides). Trivy,

@@ -3,8 +3,8 @@
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get(["apiUrl", "webUrl"]);
   const defaults = {
-    apiUrl: stored.apiUrl || "http://localhost:4000",
-    webUrl: stored.webUrl || "http://localhost:3000",
+    apiUrl: stored.apiUrl || "",
+    webUrl: stored.webUrl || "https://wpay-web.vercel.app",
   };
   await chrome.storage.local.set(defaults);
 

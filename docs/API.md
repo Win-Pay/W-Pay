@@ -27,18 +27,31 @@ Every login, registration and wallet verification returns an `AuthSession`:
 {
   "accessToken": "<jwt>",
   "expiresIn": 3600,
-  "refreshToken": "<opaque>",
   "refreshExpiresIn": 2592000,
+  "csrfToken": "<opaque>",
   "user": { "id": "...", "role": "MERCHANT", "stellarAddress": "G..." }
 }
 ```
 
+The refresh token is **not** in the body or JavaScript-readable storage. It is
+set as an `HttpOnly`, `Secure` cookie scoped to `/v1/auth` (`SameSite=None` by
+default in production, configurable to `Lax` with a first-party
+`COOKIE_DOMAIN`). A second `HttpOnly` CSRF cookie is set, and the returned
+`csrfToken` must be sent as `x-csrf-token` on refresh and logout. Browsers must
+send requests with credentials (the SDK does). `GET /auth/csrf` issues a fresh
+CSRF token/cookie for session restore after a reload.
+
 Refresh tokens are opaque, stored only as SHA-256 hashes and grouped into a
-family. `POST /auth/refresh` rotates the token and returns a new session body;
-presenting an already-rotated token is treated as theft and revokes the whole
-family. `POST /auth/logout` revokes one token; `POST /auth/logout-all` (bearer
-auth) revokes every token for the user. Access tokens are short-lived JWTs and
-remain valid until expiry after logout, so clients must clear them locally.
+family. `POST /auth/refresh` reads the cookie, rotates it and returns a new
+session body plus new cookies; presenting an already-rotated token is treated
+as theft and revokes the whole family. `POST /auth/logout` revokes the cookie's
+token and clears the cookies; `POST /auth/logout-all` (bearer auth) revokes
+every token for the user. Access tokens are short-lived JWTs and remain valid
+until expiry after logout, so clients must clear them locally.
+
+State-changing requests carrying an `Origin` header are rejected unless the
+origin is in `WEB_PUBLIC_URL` / `CORS_ORIGINS` / `API_PUBLIC_URL`; this blocks
+login CSRF and form-style cross-site posts.
 
 ## Errors
 
@@ -56,12 +69,13 @@ contract configuration behind a success.
 ### Auth
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/auth/register` | Create a user + merchant |
-| POST | `/auth/login` | Email/password → access token |
+| POST | `/auth/register` | Create a user + merchant; sets session cookies |
+| POST | `/auth/login` | Email/password → access token; sets session cookies |
+| GET | `/auth/csrf` | Issue a CSRF token/cookie for session restore |
 | POST | `/auth/wallet/challenge` | Issue a signable challenge |
-| POST | `/auth/wallet/verify` | Verify signature, issue token |
-| POST | `/auth/refresh` | Rotate a refresh token |
-| POST | `/auth/logout` | Revoke one refresh token |
+| POST | `/auth/wallet/verify` | Verify signature, issue token; sets session cookies |
+| POST | `/auth/refresh` | Rotate the refresh cookie; requires `x-csrf-token` |
+| POST | `/auth/logout` | Revoke the refresh cookie; requires `x-csrf-token` |
 | POST | `/auth/logout-all` | Revoke all refresh tokens for the user |
 | GET | `/auth/me` | Current principal and scopes |
 
@@ -101,6 +115,12 @@ database only and return `transaction: null`.
 | GET | `/invoices` | List |
 | GET | `/invoices/public/:number` | Public invoice view (no auth) |
 | POST | `/invoices/public/:number/intent` | Public payment intent |
+
+The public invoice view intentionally omits customer email, payment ids and
+merchant-internal fields, but includes what checkout needs to disclose the
+payment: `merchantName`, `merchantWebsite`, `merchantDescription`, `feeBps`,
+`fee` and `net` (merchant proceeds). `fee` is deducted from the invoice amount;
+the payer signs a transfer of the full `amount`.
 | GET | `/invoices/:id` | Merchant view |
 | POST | `/invoices/:id/cancel` | Cancel an open invoice |
 

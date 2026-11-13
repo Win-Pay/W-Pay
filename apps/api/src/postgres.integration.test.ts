@@ -51,19 +51,35 @@ function address(): string {
 async function json<T>(
   baseUrl: string,
   path: string,
-  init: { method?: string; token?: string; body?: unknown; headers?: Record<string, string> } = {},
-): Promise<{ status: number; body: T }> {
+  init: {
+    method?: string;
+    token?: string;
+    body?: unknown;
+    cookie?: string;
+    headers?: Record<string, string>;
+  } = {},
+): Promise<{ status: number; body: T; setCookie: string[] }> {
   const response = await fetch(`${baseUrl}/v1${path}`, {
     method: init.method ?? "GET",
     headers: {
       "content-type": "application/json",
       ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+      ...(init.cookie ? { cookie: init.cookie } : {}),
       ...init.headers,
     },
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   const text = await response.text();
-  return { status: response.status, body: (text ? JSON.parse(text) : null) as T };
+  return {
+    status: response.status,
+    body: (text ? JSON.parse(text) : null) as T,
+    setCookie: response.headers.getSetCookie(),
+  };
+}
+
+/** Formats Set-Cookie response headers as a request Cookie header. */
+function cookieHeader(setCookie: string[]): string {
+  return setCookie.map((entry) => entry.split(";")[0]).join("; ");
 }
 
 async function buildHarness(): Promise<Harness> {
@@ -227,11 +243,11 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(anonymous.status).toBe(401);
     });
 
-    it("issues refresh tokens, rotates them and detects reuse", async () => {
+    it("puts refresh tokens in httpOnly cookies, rotates them and detects reuse", async () => {
       const email = `refresh.${run}@wpay.test`;
       const registered = await json<{
         accessToken: string;
-        refreshToken: string;
+        csrfToken: string;
         refreshExpiresIn: number;
         user: { id: string };
       }>(harness.baseUrl, "/auth/register", {
@@ -240,38 +256,87 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       });
       expect(registered.status).toBe(201);
       expect(registered.body.accessToken.length).toBeGreaterThan(20);
-      expect(registered.body.refreshToken.length).toBeGreaterThan(32);
+      expect(registered.body).not.toHaveProperty("refreshToken");
+      expect(registered.body.csrfToken.length).toBeGreaterThan(20);
       expect(registered.body.refreshExpiresIn).toBeGreaterThan(0);
+      const originalCookies = cookieHeader(registered.setCookie);
+      expect(originalCookies).toContain("wpay_refresh=");
+      expect(originalCookies).toContain("wpay_csrf=");
+      expect(registered.setCookie.join(";")).toContain("HttpOnly");
       created.users.push(registered.body.user.id);
 
-      const rotated = await json<{ accessToken: string; refreshToken: string }>(
+      const rotated = await json<{ accessToken: string; csrfToken: string }>(
         harness.baseUrl,
         "/auth/refresh",
         {
           method: "POST",
-          body: { refreshToken: registered.body.refreshToken },
+          cookie: originalCookies,
+          headers: { "x-csrf-token": registered.body.csrfToken },
         },
       );
       expect(rotated.status).toBe(200);
       expect(rotated.body.accessToken.length).toBeGreaterThan(20);
-      expect(rotated.body.refreshToken).not.toBe(registered.body.refreshToken);
+      expect(rotated.body.csrfToken).not.toBe(registered.body.csrfToken);
+      expect(rotated.body).not.toHaveProperty("refreshToken");
+      const rotatedCookies = cookieHeader(rotated.setCookie);
 
-      // Presenting the old token again revokes the whole family, including the
+      // Presenting the old cookie again revokes the whole family, including the
       // token that was just issued.
       const reuse = await json(harness.baseUrl, "/auth/refresh", {
         method: "POST",
-        body: { refreshToken: registered.body.refreshToken },
+        cookie: originalCookies,
+        headers: { "x-csrf-token": registered.body.csrfToken },
       });
       expect(reuse.status).toBe(401);
       const afterReuse = await json(harness.baseUrl, "/auth/refresh", {
         method: "POST",
-        body: { refreshToken: rotated.body.refreshToken },
+        cookie: rotatedCookies,
+        headers: { "x-csrf-token": rotated.body.csrfToken },
       });
       expect(afterReuse.status).toBe(401);
     });
 
+    it("rejects refresh and logout without a matching CSRF token", async () => {
+      const email = `csrf.${run}@wpay.test`;
+      const registered = await json<{ csrfToken: string; user: { id: string } }>(
+        harness.baseUrl,
+        "/auth/register",
+        { method: "POST", body: { email, password: "correct-horse-battery" } },
+      );
+      created.users.push(registered.body.user.id);
+      const cookies = cookieHeader(registered.setCookie);
+
+      const missing = await json(harness.baseUrl, "/auth/refresh", {
+        method: "POST",
+        cookie: cookies,
+      });
+      expect(missing.status).toBe(403);
+      const wrong = await json(harness.baseUrl, "/auth/refresh", {
+        method: "POST",
+        cookie: cookies,
+        headers: { "x-csrf-token": "not-the-token" },
+      });
+      expect(wrong.status).toBe(403);
+      const logout = await json(harness.baseUrl, "/auth/logout", {
+        method: "POST",
+        cookie: cookies,
+        headers: { "x-csrf-token": "not-the-token" },
+      });
+      expect(logout.status).toBe(403);
+    });
+
+    it("rejects state-changing requests from an unlisted browser origin", async () => {
+      const response = await json<{ code: string }>(harness.baseUrl, "/auth/login", {
+        method: "POST",
+        headers: { origin: "https://attacker.example" },
+        body: { email: `admin.${run}@wpay.test`, password: "correct-horse-battery" },
+      });
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe("ORIGIN_FORBIDDEN");
+    });
+
     it("revokes a refresh token on logout", async () => {
-      const session = await json<{ refreshToken: string; user: { id: string } }>(
+      const session = await json<{ csrfToken: string; user: { id: string } }>(
         harness.baseUrl,
         "/auth/login",
         {
@@ -283,14 +348,17 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
         },
       );
       expect(session.status).toBe(201);
+      const cookies = cookieHeader(session.setCookie);
       const logout = await json<{ revoked: boolean }>(harness.baseUrl, "/auth/logout", {
         method: "POST",
-        body: { refreshToken: session.body.refreshToken },
+        cookie: cookies,
+        headers: { "x-csrf-token": session.body.csrfToken },
       });
       expect(logout.status).toBe(200);
       const refresh = await json(harness.baseUrl, "/auth/refresh", {
         method: "POST",
-        body: { refreshToken: session.body.refreshToken },
+        cookie: cookies,
+        headers: { "x-csrf-token": session.body.csrfToken },
       });
       expect(refresh.status).toBe(401);
     });
@@ -465,12 +533,21 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       created.invoices.push(response.body.id);
       invoiceNumber = response.body.number;
 
-      const publicLookup = await json<{ number: string; amount: string }>(
-        harness.baseUrl,
-        `/invoices/public/${invoiceNumber}`,
-      );
+      const publicLookup = await json<{
+        number: string;
+        amount: string;
+        merchantName: string;
+        feeBps: number;
+        fee: string;
+        net: string;
+      }>(harness.baseUrl, `/invoices/public/${invoiceNumber}`);
       expect(publicLookup.status).toBe(200);
       expect(publicLookup.body.amount).toBe("25000000");
+      expect(publicLookup.body.merchantName).toBeTruthy();
+      expect(publicLookup.body.feeBps).toBe(250);
+      // 250 bps of 25,000,000 is 625,000.
+      expect(publicLookup.body.fee).toBe("625000");
+      expect(publicLookup.body.net).toBe("24375000");
     });
 
     it("rejects a due date in the past", async () => {

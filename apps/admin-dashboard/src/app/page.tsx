@@ -13,6 +13,7 @@ import {
   Field,
   Input,
   PageHeader,
+  Spinner,
   Stat,
   Textarea,
   statusTone,
@@ -134,6 +135,19 @@ export default function AdminDashboard(): React.ReactElement {
       <main className="admin-shell">
         <Card title="Backend not configured">
           <Alert tone="error">{session.configError}</Alert>
+        </Card>
+      </main>
+    );
+  }
+
+  if (session.restoring) {
+    return (
+      <main className="admin-shell">
+        <Card title="Restoring session">
+          <div className="wp-row">
+            <Spinner />
+            <span className="wp-muted">Checking your saved sign-in…</span>
+          </div>
         </Card>
       </main>
     );

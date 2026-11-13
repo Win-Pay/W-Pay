@@ -16,6 +16,7 @@ import type {
   LoginInput,
   MerchantRecord,
   PaymentRecord,
+  PublicInvoiceRecord,
   RefundRecord,
   RegisterInput,
   RequestRefundInput,
@@ -31,8 +32,9 @@ import { HttpClient, type ApiClientOptions, type RequestOptions } from "./http";
 export interface AuthSession {
   accessToken: string;
   expiresIn: number;
-  refreshToken: string;
   refreshExpiresIn: number;
+  /** Sent back as `x-csrf-token` on refresh and logout. */
+  csrfToken: string;
   user: {
     id: string;
     email: string;
@@ -149,13 +151,19 @@ export class WPayApi {
       this.http.request<AuthSession>("POST", "/v1/auth/login", input, {
         skipAuthRefresh: true,
       }),
-    refresh: (refreshToken: string) =>
-      this.http.request<AuthSession>("POST", "/v1/auth/refresh", { refreshToken }, {
+    csrf: () =>
+      this.http.request<{ csrfToken: string }>("GET", "/v1/auth/csrf", undefined, {
         skipAuthRefresh: true,
       }),
-    logout: (refreshToken: string) =>
-      this.http.request<{ revoked: true }>("POST", "/v1/auth/logout", { refreshToken }, {
+    refresh: (csrfToken: string) =>
+      this.http.request<AuthSession>("POST", "/v1/auth/refresh", undefined, {
         skipAuthRefresh: true,
+        headers: { "x-csrf-token": csrfToken },
+      }),
+    logout: (csrfToken: string) =>
+      this.http.request<{ revoked: true }>("POST", "/v1/auth/logout", undefined, {
+        skipAuthRefresh: true,
+        headers: { "x-csrf-token": csrfToken },
       }),
     logoutAll: () => this.http.request<{ revoked: true }>("POST", "/v1/auth/logout-all"),
     walletChallenge: (address: string) =>
@@ -210,7 +218,7 @@ export class WPayApi {
       this.http.requestPage<InvoiceRecord>("/v1/invoices", query),
     get: (id: string) => this.http.request<InvoiceRecord>("GET", `/v1/invoices/${id}`),
     public: (number: string) =>
-      this.http.request<InvoiceRecord>("GET", `/v1/invoices/public/${number}`),
+      this.http.request<PublicInvoiceRecord>("GET", `/v1/invoices/public/${number}`),
     cancel: (id: string) => this.http.request<InvoiceRecord>("POST", `/v1/invoices/${id}/cancel`),
     payIntent: (number: string, payer: string) =>
       this.http.request<TransactionIntent>("POST", `/v1/invoices/public/${number}/intent`, {

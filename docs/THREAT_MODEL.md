@@ -30,7 +30,7 @@
 | Malicious merchant registration | Impersonation | Operator approval required before activation | Implemented |
 | Pause abuse | Denial of service | Pause requires authority/admin; unpause event logged | Implemented |
 | API key leak | Scoped data/payment access | Hashed at rest, prefix lookup, scopes, revocable | Implemented |
-| JWT theft via XSS | Account takeover | Short expiry; CSP/helmet; no tokens in URLs | Partially mitigated; tokens in localStorage |
+| JWT theft via XSS | Account takeover | Short expiry; production CSP/helmet; access and CSRF tokens memory-only; no tokens in URLs; refresh token is an `HttpOnly`, `Secure` cookie scoped to `/v1/auth`, rotated with family revocation and gated by `x-csrf-token` | Reduced; cross-site refresh depends on browser third-party-cookie policy, so a first-party cookie domain is preferred |
 | Webhook SSRF | Internal network access | Merchant-supplied URLs fetched by worker | Mitigated: `url-guard.ts` blocks private/reserved IPv4/IPv6, local names and redirects at registration and delivery |
 | Webhook forgery | Fake payment events | HMAC-SHA256 over timestamp + body, constant-time compare | Implemented |
 | Challenge replay | Session hijack | Single-use, expiring challenge bound to domain | Implemented; challenges persist in the `WalletNonce` table, so any replica can verify |

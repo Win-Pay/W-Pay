@@ -224,6 +224,17 @@ describe.skipIf(!hasDatabase)("webhook delivery", () => {
     expect(delivery?.deliveredAt).toBeInstanceOf(Date);
   });
 
+  it("claims each delivery once when two workers drain concurrently", async () => {
+    await endpoint();
+    responses = [200, 200];
+    await service.enqueueForMerchant(merchantId, "payment.settled", { paymentId: "once" });
+
+    const other = new WebhooksService(prisma as never);
+    await Promise.all([service.drain(), other.drain()]);
+
+    expect(captured).toHaveLength(1);
+  });
+
   it("retries a failing endpoint and then dead-letters it", async () => {
     const target = await endpoint();
     responses = [500, 500];

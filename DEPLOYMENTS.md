@@ -20,11 +20,14 @@ until that variable points at a deployed backend.
 | Admin dashboard | deployed (frontend only) | <https://wpay-admin.vercel.app> — HTTP 200 verified 2026-11-12 |
 
 The frontend bundles contain `NEXT_PUBLIC_API_URL` only when it is set at Vercel
-build time. Production builds no longer fall back to `localhost`; a missing URL
-renders a visible configuration error instead of pretending to call an API.
-Backend deployment and the exact Vercel values are documented in
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and
-[docs/VERCEL.md](docs/VERCEL.md).
+build time. The currently hosted bundles were built on 2026-11-12 before the
+fail-closed change and still contain the old `http://localhost:4000` fallback;
+they cannot reach any backend. Current source requires `NEXT_PUBLIC_API_URL` and
+renders a visible configuration error instead. Redeploy all three projects after
+setting the variable. Backend deployment and the exact Vercel values are
+documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and
+[docs/VERCEL.md](docs/VERCEL.md). The checkout app also serves a product landing
+page at `/landing`; `/` remains the invoice checkout.
 
 ### Frontend deployment record
 

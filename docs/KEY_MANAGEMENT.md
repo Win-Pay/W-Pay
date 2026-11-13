@@ -82,13 +82,18 @@ For any automated signing (settlement execution, oracle updates):
 - `JWT_SECRET` is a symmetric signing key. Generate 32 random bytes, store it in
   a secret manager, rotate on a schedule, and accept a short overlap window only
   if token invalidation is acceptable.
-- Tokens are currently stored in `localStorage`; this is an XSS exposure. Moving
-  to httpOnly, `SameSite=Strict` cookies with CSRF protection is a planned
-  hardening item, not implemented.
+- Access and CSRF tokens are held in memory only. The rotating refresh token is
+  an `HttpOnly`, `Secure` cookie scoped to `/v1/auth` and is never readable from
+  JavaScript; refresh and logout require a matching `x-csrf-token` header.
+  `SameSite` defaults to `None` in production (cross-site frontends) and can be
+  set to `Lax` with a first-party `COOKIE_DOMAIN`. Because cross-site cookies
+  depend on browser third-party-cookie policy, a first-party cookie domain is
+  preferred.
 - API keys are hashed at rest and scoped; rotate by creating a new key, deploying
   it, then revoking the old one. Never log the plaintext.
-- The browser extension requests `https://*/*` host permission. Production builds
-  should request only the configured API origin.
+- The browser extension requests only the configured API origin, at lookup time,
+  through `optional_host_permissions`; it no longer asks for `https://*/*` at
+  install.
 
 ## Ceremony checklist (not yet performed)
 

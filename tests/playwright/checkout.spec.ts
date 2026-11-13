@@ -9,6 +9,12 @@ const openInvoice = {
   id: "inv_playwright",
   number: INVOICE_NUMBER,
   merchantId: "mer_playwright",
+  merchantName: "Playwright Merchant",
+  merchantWebsite: null,
+  merchantDescription: null,
+  feeBps: 250,
+  fee: "250000",
+  net: "9750000",
   token: "native",
   amount: "10000000",
   memo: "playwright",
@@ -70,6 +76,17 @@ test("reports a missing wallet instead of pretending to pay", async ({ page }) =
   await expect(page.getByRole("button", { name: "Pay invoice" })).toBeDisabled();
 });
 
+test("shows merchant details and the fee split before paying", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await page.getByLabel("Invoice number").fill(INVOICE_NUMBER);
+  await page.getByRole("button", { name: "Find invoice" }).click();
+  await expect(page.getByText("Playwright Merchant")).toBeVisible();
+  await expect(page.getByText(/Platform fee \(2\.50%\)/)).toBeVisible();
+  await expect(page.getByText("Merchant receives")).toBeVisible();
+  await expect(page.getByText("0.975")).toBeVisible();
+});
+
 test("connects, signs, submits once and shows the confirmed transaction", async ({ page }) => {
   const requests = await mockApi(page);
   await page.addInitScript(({ address }) => {
@@ -90,6 +107,11 @@ test("connects, signs, submits once and shows the confirmed transaction", async 
   await pay.click();
   await expect(page.getByText(`Payment confirmed on chain: ${TX_HASH}`)).toBeVisible();
   await expect(page.getByText("PAID", { exact: true })).toBeVisible();
+  await expect(page.getByText("Payment receipt")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Stellar Expert/ })).toHaveAttribute(
+    "href",
+    `https://stellar.expert/explorer/testnet/tx/${TX_HASH}`,
+  );
   expect(requests.submissions()).toBe(1);
 });
 
@@ -110,4 +132,13 @@ test("surfaces a failed network submission and does not mark the invoice paid", 
   await expect(page.getByText(/transaction failed/i)).toBeVisible();
   await expect(page.getByText("PAID", { exact: true })).toHaveCount(0);
   expect(requests.submissions()).toBe(1);
+});
+
+test("serves a separate landing page without replacing checkout", async ({ page }) => {
+  await page.goto("/landing");
+  await expect(
+    page.getByRole("heading", { name: /Accept wallet payments without giving up custody/i }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open checkout" })).toHaveAttribute("href", "/");
+  await expect(page.getByText(/deployed on Stellar Testnet/i)).toBeVisible();
 });

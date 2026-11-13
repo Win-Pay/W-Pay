@@ -60,6 +60,25 @@ describe("WPayApi", () => {
     expect(String(fetchImpl.mock.calls[0]![0])).toContain("limit=5");
   });
 
+  it("refreshes with cookies and a CSRF header instead of a token body", async () => {
+    const { api, fetchImpl } = client(() =>
+      jsonResponse({
+        accessToken: "fresh.jwt",
+        expiresIn: 3600,
+        refreshExpiresIn: 86400,
+        csrfToken: "new-csrf",
+        user: { id: "u_1", email: "a@b.c", role: "USER", stellarAddress: null, displayName: null },
+      }),
+    );
+    const session = await api.auth.refresh("csrf-token");
+    expect(session.accessToken).toBe("fresh.jwt");
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(String(url)).toBe("https://api.wpay.test/v1/auth/refresh");
+    expect(init?.credentials).toBe("include");
+    expect(init?.body).toBeUndefined();
+    expect((init!.headers as Record<string, string>)["x-csrf-token"]).toBe("csrf-token");
+  });
+
   it("supports API key auth", async () => {
     const { api, fetchImpl } = client(() => jsonResponse({ items: [], nextCursor: null }));
     api.setApiKey("wpay_live_abc");

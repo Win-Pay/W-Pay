@@ -37,7 +37,7 @@ function message(text, className) {
 
 async function loadSettings() {
   const stored = await chrome.storage.local.get(["apiUrl", "webUrl", "pendingInvoice"]);
-  apiInput.value = stored.apiUrl || "http://localhost:4000";
+  apiInput.value = stored.apiUrl || "";
   numberInput.value = stored.pendingInvoice || "";
   if (stored.pendingInvoice) {
     await chrome.storage.local.remove("pendingInvoice");
@@ -45,17 +45,32 @@ async function loadSettings() {
   }
 }
 
+/** Host access is optional; request exactly the configured API origin on first use.
+ * @param {string} apiUrl
+ */
+async function ensureHostPermission(apiUrl) {
+  let origin;
+  try {
+    origin = new URL(apiUrl).origin;
+  } catch {
+    throw new Error("Enter a valid API URL, for example https://api.your-domain.com");
+  }
+  const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+  if (!granted) throw new Error(`Access to ${origin} was not granted.`);
+}
+
 async function lookup() {
-  const apiUrl = apiInput.value.replace(/\/$/, "");
+  const apiUrl = apiInput.value.trim().replace(/\/$/, "");
   const number = numberInput.value.trim().toUpperCase();
   if (!apiUrl || !number) {
     render(message("Enter an API URL and invoice number.", "error"));
     return;
   }
-  await chrome.storage.local.set({ apiUrl });
   lookupButton.disabled = true;
   render(message("Looking up…", "muted"));
   try {
+    await ensureHostPermission(apiUrl);
+    await chrome.storage.local.set({ apiUrl });
     const response = await fetch(`${apiUrl}/v1/invoices/public/${encodeURIComponent(number)}`);
     if (!response.ok) {
       render(message(`Invoice not found (HTTP ${response.status}).`, "error"));
@@ -81,7 +96,7 @@ async function lookup() {
       copy.textContent = "Copy checkout link";
       copy.addEventListener("click", async () => {
         const stored = await chrome.storage.local.get(["webUrl"]);
-        const webUrl = (stored.webUrl || "http://localhost:3000").replace(/\/$/, "");
+        const webUrl = (stored.webUrl || "https://wpay-web.vercel.app").replace(/\/$/, "");
         await navigator.clipboard.writeText(`${webUrl}/?invoice=${encodeURIComponent(invoice.number)}`);
         copy.textContent = "Copied";
       });

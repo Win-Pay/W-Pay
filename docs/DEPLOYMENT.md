@@ -16,6 +16,16 @@ performed**, and the production steps below have not been executed.
       [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md) for the 2-of-3 design and ceremony.
 - [ ] `CORS_ORIGINS` lists every browser origin (comma-separated). Production
       does not add localhost automatically.
+- [ ] `WEB_PUBLIC_URL` and `API_PUBLIC_URL` are real public **HTTPS** origins
+      (no placeholders). Production refuses to boot otherwise.
+- [ ] `JWT_SECRET` is 32+ random characters and not a template value.
+- [ ] `REDIS_URL` points at a reachable Redis (required in production unless
+      `ALLOW_IN_MEMORY_RATE_LIMIT=1` is deliberately set).
+- [ ] `TRUST_PROXY` matches the proxy/ingress hop count (defaults to `1`) so
+      rate limits key on the client address, not the ingress.
+- [ ] Decide cookie scope: default `SameSite=None` works across sites but
+      depends on browser third-party-cookie policy; set a first-party
+      `COOKIE_DOMAIN` and `REFRESH_COOKIE_SAMESITE=lax` where possible.
 - [ ] Synchronized clocks and a reachable `STELLAR_RPC_URL`; `/v1/health/ready`
       probes it and returns `503` when it is down.
 - [ ] Domain, TLS certificate, and DNS for API + checkout.

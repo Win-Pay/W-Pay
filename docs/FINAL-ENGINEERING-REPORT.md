@@ -28,7 +28,9 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | Dependencies | zod upgraded to 4; transitive overrides moved to `pnpm-workspace.yaml`; production audit clean |
 | Documentation | README, ROADMAP, DEPLOYMENTS, SECURITY, THREAT_MODEL, AUDIT, TESTING, DEPLOYMENT, DISASTER_RECOVERY, INDEXER and the engineering report reconciled with code and recorded results |
 | Frontend integration (2026-11-13) | All three Next apps use the shared refresh-aware session client, render a visible config error without `NEXT_PUBLIC_API_URL`, and never show payment success before backend verification; merchant onboarding, admin intent signing, webhooks, API keys and settlement batches are wired to the real API |
-| Auth hardening (2026-11-13) | Opaque refresh tokens with SHA-256 storage, rotation, family revocation on reuse, logout and logout-all; SEP-53 single-use challenges |
+| Auth hardening (2026-11-13) | Refresh token moved to an `HttpOnly`, `Secure`, `/v1/auth`-scoped cookie with CSRF header on refresh/logout; opaque tokens hashed, rotated and family-revoked on reuse; SEP-53 single-use challenges; unlisted-origin rejection |
+| Production config fail-closed | Production boot refuses placeholder JWT secret, non-HTTPS or placeholder public URLs, and missing `REDIS_URL`; cookie SameSite/domain and `trust proxy` are configurable |
+| Webhook delivery atomic claim | Timestamp-conditional claim prevents two workers from delivering the same attempt |
 | Merchant fee enforcement | Non-staff merchant creation must match the authenticated wallet and is locked to the 250 bps platform rate |
 | Invoice memo binding | Invoice confirmation verifies the contract invocation memo against the invoice number |
 | Production deployment assets | `docker-compose.prod.yml` (Postgres, Redis, one-shot migrations, API, indexer, Caddy TLS), `.env.production.example`, `infra/caddy/Caddyfile`, per-app `.env.example` and `vercel.json`; nothing was deployed |
@@ -44,14 +46,14 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | API confirmation | local API + Testnet | invoice `PAID`, payment `SETTLED`, `contractPaymentId=1`; bogus hash and mismatched amount rejected |
 | Typecheck | `pnpm typecheck` | 22/22 tasks |
 | Build | `pnpm build` | API, indexer, three Next apps, mobile and extension build |
-| TypeScript tests | `pnpm test` | 199 passed, 2 skipped |
+| TypeScript tests | `pnpm test` | 209 passed, 2 skipped (api 145, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
 | API coverage | `pnpm --filter @wpay/api test:coverage` | 89.4% statements |
 | Postgres integration | `pnpm --filter @wpay/api test` with `DATABASE_URL` | real Postgres suites pass, including rollback/cleanup |
 | Lint | `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Secrets | Gitleaks | no leaks in tracked history |
 | Backup drill | `scripts/db-restore-drill.sh` | source and restored row counts match; encrypted backup round-trip passed; local restore ~1s |
-| Browser checkout | `pnpm test:browser` | 3 passed with mocked Freighter + mocked API |
+| Browser checkout | `pnpm test:browser` | 5 passed with mocked Freighter + mocked API |
 | Docker | API image build + health smoke | `/v1/health` returns `database: "up"` as non-root |
 | Kubernetes/Helm | kubeconform, `helm lint`, `helm template` | 10 manifests and 8 rendered resources valid |
 | Monitoring | promtool, amtool | Prometheus and Alertmanager configs valid |
@@ -103,9 +105,14 @@ Open and documented in [AUDIT.md](AUDIT.md):
 - Centralized admin key (fee cap, pause, upgrade proposals); the Testnet
   deployer must not be reused.
 - No independent audit or formal verification of contracts holding funds.
-- JWT stored in `localStorage`; broad extension host permission.
-- Real Freighter extension interaction not covered by CI; three Playwright
-  checkout tests use a mocked provider and mocked API.
+- Access and CSRF tokens are memory-only; the rotating refresh token is an
+  `HttpOnly`, `Secure` cookie with CSRF headers on refresh/logout. Cross-site
+  refresh depends on browser third-party-cookie policy, so a first-party cookie
+  domain is preferred. The extension
+  requests only the configured API origin at lookup time. Production Next builds
+  send CSP and standard security headers.
+- Real Freighter extension interaction not covered by CI; five Playwright
+  checkout/landing tests use a mocked provider and mocked API.
 - Container hardening not exercised beyond build and health smoke test.
 - `cargo audit` reports RUSTSEC-2026-0387 in transitive `crypto-bigint` 0.5.5
   (via `soroban-env-host` 29.0.1). The patched 0.7.x line is incompatible with

@@ -36,7 +36,10 @@ services:
       context: .
       dockerfile: infra/docker/api.Dockerfile
     environment:
-      NODE_ENV: production
+      # Local stack: production images, development policy (http origins,
+      # localhost cookies, HTTP webhook targets). Production uses the separate
+      # docker-compose.prod.yml with HTTPS-only validation.
+      NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-wpay}:${POSTGRES_PASSWORD:-wpay_local_only}@postgres:5432/${POSTGRES_DB:-wpay}?schema=public
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ chars)}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}

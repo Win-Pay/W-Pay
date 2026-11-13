@@ -62,9 +62,9 @@ export function usePolling(callback: () => void, intervalMs: number, enabled = t
   }, [intervalMs, enabled]);
 }
 
-const TOKEN_KEY = "wpay.token";
-const REFRESH_KEY = "wpay.refresh";
-
+// Legacy keys from builds that persisted credentials; removed on mount.
+const LEGACY_TOKEN_KEY = "wpay.token";
+const LEGACY_REFRESH_KEY = "wpay.refresh";
 /**
  * Resolves the backend URL without silently pointing production builds at
  * localhost. A missing NEXT_PUBLIC_API_URL is a deployment error the UI must
@@ -101,6 +101,8 @@ export interface Session {
   token: string | null;
   user: SessionUser | null;
   configError: string | null;
+  /** True while a stored refresh token is being exchanged for a session. */
+  restoring: boolean;
   setToken: (token: string | null) => void;
   setUser: (user: SessionUser | null) => void;
   setSession: (session: AuthSession) => void;
@@ -108,33 +110,28 @@ export interface Session {
 }
 
 /**
- * API client plus token persistence. The default URL comes from
- * NEXT_PUBLIC_API_URL (or VITE_API_URL for the mobile app).
+ * API client plus session persistence. Access and CSRF tokens live in memory;
+ * the rotating refresh token is an HttpOnly cookie, so a reload can restore
+ * the session without JavaScript ever reading it.
+ * The default URL comes from NEXT_PUBLIC_API_URL (or VITE_API_URL for mobile).
  */
 export function useSession(defaultApiUrl?: string): Session {
   const resolution = useMemo(() => resolveApiBaseUrl(defaultApiUrl), [defaultApiUrl]);
 
   const [token, setTokenState] = useState<string | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [restoring, setRestoring] = useState(true);
+  const refreshInFlight = useRef<Promise<string | null> | null>(null);
+  const csrfRef = useRef<string | null>(null);
 
   const api = useMemo(() => new WPayApi({ baseUrl: resolution.url }), [resolution.url]);
-
-  const persist = useCallback((access: string | null, refresh: string | null) => {
-    if (typeof window === "undefined") return;
-    if (access) window.localStorage.setItem(TOKEN_KEY, access);
-    else window.localStorage.removeItem(TOKEN_KEY);
-    if (refresh) window.localStorage.setItem(REFRESH_KEY, refresh);
-    else window.localStorage.removeItem(REFRESH_KEY);
-  }, []);
 
   const setToken = useCallback(
     (next: string | null) => {
       api.setToken(next ?? undefined);
       setTokenState(next);
-      if (!next) persist(null, null);
-      else persist(next, null);
     },
-    [api, persist],
+    [api],
   );
 
   const setSession = useCallback(
@@ -142,30 +139,42 @@ export function useSession(defaultApiUrl?: string): Session {
       api.setToken(session.accessToken);
       setTokenState(session.accessToken);
       setUser(session.user);
-      persist(session.accessToken, session.refreshToken);
+      csrfRef.current = session.csrfToken;
+      setRestoring(false);
     },
-    [api, persist],
+    [api],
   );
 
   const refreshSession = useCallback(async (): Promise<string | null> => {
     if (typeof window === "undefined") return null;
-    const refreshToken = window.localStorage.getItem(REFRESH_KEY);
-    if (!refreshToken) return null;
-    try {
-      const session = await api.auth.refresh(refreshToken);
-      api.setToken(session.accessToken);
-      setTokenState(session.accessToken);
-      setUser(session.user);
-      persist(session.accessToken, session.refreshToken);
-      return session.accessToken;
-    } catch {
-      api.setToken(undefined);
-      setTokenState(null);
-      setUser(null);
-      persist(null, null);
-      return null;
-    }
-  }, [api, persist]);
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const run = (async () => {
+      let csrfToken = csrfRef.current;
+      try {
+        if (!csrfToken) {
+          csrfToken = (await api.auth.csrf()).csrfToken;
+        }
+        // The refresh token is an httpOnly cookie; this request only carries
+        // the CSRF header, so an XSS cannot read or mint the refresh token.
+        const session = await api.auth.refresh(csrfToken);
+        api.setToken(session.accessToken);
+        setTokenState(session.accessToken);
+        setUser(session.user);
+        csrfRef.current = session.csrfToken;
+        return session.accessToken;
+      } catch {
+        api.setToken(undefined);
+        setTokenState(null);
+        setUser(null);
+        csrfRef.current = null;
+        return null;
+      } finally {
+        refreshInFlight.current = null;
+      }
+    })();
+    refreshInFlight.current = run;
+    return run;
+  }, [api]);
 
   useEffect(() => {
     api.setUnauthorizedHandler(refreshSession);
@@ -173,30 +182,39 @@ export function useSession(defaultApiUrl?: string): Session {
   }, [api, refreshSession]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(TOKEN_KEY);
-    if (stored) {
-      api.setToken(stored);
-      setTokenState(stored);
-      return;
-    }
-    if (window.localStorage.getItem(REFRESH_KEY)) void refreshSession();
-  }, [api, refreshSession]);
+    if (typeof window === "undefined") return;
+    // Older builds persisted access and refresh tokens; remove them and use
+    // the httpOnly cookie from now on.
+    window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+    window.localStorage.removeItem(LEGACY_REFRESH_KEY);
+    void refreshSession().finally(() => setRestoring(false));
+  }, [refreshSession]);
 
   const logout = useCallback(() => {
-    const refreshToken =
-      typeof window !== "undefined" ? window.localStorage.getItem(REFRESH_KEY) : null;
-    if (refreshToken) void api.auth.logout(refreshToken).catch(() => undefined);
+    void (async () => {
+      let csrfToken = csrfRef.current;
+      if (!csrfToken) {
+        try {
+          csrfToken = (await api.auth.csrf()).csrfToken;
+        } catch {
+          return;
+        }
+      }
+      await api.auth.logout(csrfToken).catch(() => undefined);
+    })();
     api.setToken(undefined);
     setTokenState(null);
     setUser(null);
-    persist(null, null);
-  }, [api, persist]);
+    csrfRef.current = null;
+    setRestoring(false);
+  }, [api]);
 
   return {
     api,
     token,
     user,
     configError: resolution.error,
+    restoring,
     setToken,
     setUser,
     setSession,

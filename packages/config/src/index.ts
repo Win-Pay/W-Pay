@@ -123,6 +123,14 @@ export const ServerEnvSchema = z.object({
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   /** Enables the shared rate-limit counters; unset means in-process counters. */
   REDIS_URL: z.string().url().optional(),
+  /** Explicit opt-in required to run production with per-process limits. */
+  ALLOW_IN_MEMORY_RATE_LIMIT: z.enum(["0", "1"]).default("0"),
+  /** Express `trust proxy` hop count; defaults to 1 in production behind Caddy/ingress. */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  /** SameSite mode for the refresh/CSRF cookies; defaults to `none` in production. */
+  REFRESH_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),
+  /** Optional parent domain for cookies in a first-party deployment. */
+  COOKIE_DOMAIN: z.string().min(1).optional(),
   ADMIN_ADDRESSES: z.string().default(""),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });

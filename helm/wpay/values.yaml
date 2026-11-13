@@ -22,6 +22,8 @@ config:
   STELLAR_NETWORK: testnet
   API_PUBLIC_URL: https://api.wpay.example
   WEB_PUBLIC_URL: https://pay.wpay.example
+  CORS_ORIGINS: https://pay.wpay.example,https://merchant.wpay.example,https://admin.wpay.example
+  TRUST_PROXY: "1"
 
 ingress:
   enabled: true

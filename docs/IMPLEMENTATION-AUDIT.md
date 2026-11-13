@@ -38,8 +38,10 @@ not fully exercised; **open** = not implemented.
 | Postgres integration tests with transactions/rollbacks | done | `apps/api/src/postgres.integration.test.ts`, `blockchain.integration.test.ts`, `webhooks/webhooks.integration.test.ts` |
 | Payment/refund idempotency | done | idempotency handling in `apps/api/src/modules/payments.ts` and refund approval path |
 | API line coverage ≥80%, money paths ≥90% | done | 89.4% statements; payments 90.03%, invoices 91.95%, operations 91.49%, platform 91.97%, auth 90.76% |
-| Distributed rate limiting | done | `RedisRateLimitStore` in `apps/api/src/rate-limit.store.ts`; in-process fallback warns |
-| Webhook signature/retry/DLQ tests | done | signature and timestamp checks; retry then `FAILED` dead-letter and requeue in `webhooks.integration.test.ts` |
+| Distributed rate limiting | done | `RedisRateLimitStore` in `apps/api/src/rate-limit.store.ts`; production refuses to boot without `REDIS_URL` unless `ALLOW_IN_MEMORY_RATE_LIMIT=1` is set |
+| Webhook signature/retry/DLQ tests | done | signature and timestamp checks; atomic timestamp-conditional claim; retry then `FAILED` dead-letter and requeue in `webhooks.integration.test.ts` |
+| Session delivery and CSRF | done | refresh token is an `HttpOnly`, `Secure`, `/v1/auth`-scoped cookie, rotated and family-revoked; refresh/logout require `x-csrf-token`; unlisted-origin state changes return `403 ORIGIN_FORBIDDEN`; verified in Postgres integration and a production Docker smoke test |
+| Fail-closed production config | done | `assertProductionConfig` rejects placeholder secrets/URLs and missing Redis; `trust proxy` defaults to one hop; tested in `apps/api/src/config.test.ts` |
 | Health, readiness and dependency failures | done | `/health/ready` probes Postgres and Soroban RPC (`getLatestLedger`), returning 503; storage/Redis failures propagate |
 | Production CORS/auth configuration | done | `WEB_PUBLIC_URL` + `CORS_ORIGINS` allowlist; localhost only outside production |
 | Settlement batch processing | done/partial | operator batch API, duplicate/period checks, link/intents/execute/cancel, SDK builders and Postgres tests; automatic worker and funding automation remain open |
@@ -52,7 +54,7 @@ not fully exercised; **open** = not implemented.
 | Checkout submits real Soroban transactions | done | `apps/web` builds and submits signed XDR through the API; the API verifies the result |
 | Invoice/payment/merchant/admin/pause flows | done | API and dashboards implement these; admin pause builds the intent transaction |
 | Loading/error/confirmation states, no simulated success | done | no settled state without an API/on-chain result; refund approval returns `409` while unlinked |
-| Browser wallet interaction tested | **partial** | Freighter connect/sign/submit implemented; 3 Playwright tests use a mocked provider and mocked API. Real-extension signing is not tested |
+| Browser wallet interaction tested | **partial** | Freighter connect/sign/submit implemented; 5 Playwright tests use a mocked provider and mocked API (checkout, fee disclosure, receipt/Explorer, failure, landing). Real-extension signing is not tested |
 
 ## Security
 
@@ -61,7 +63,7 @@ not fully exercised; **open** = not implemented.
 | Threat model and authorization review | done | [THREAT_MODEL.md](THREAT_MODEL.md), [AUDIT.md](AUDIT.md) |
 | Treasury/escrow/refund accounting | done | checked arithmetic and caps in contracts; reconciliation guidance in [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md) |
 | Upgrade mechanism review | done | upgrade manager requires proposal, delay and authority; delay configuration remains an operational task |
-| Regression tests for findings | done | SSRF, rate limit, challenge, refund linkage, confirmation, settlement batch, indexer retry tests |
+| Regression tests for findings | done | SSRF, rate limit, challenge, refund linkage, confirmation, settlement batch, indexer retry, cookie/CSRF and origin-rejection tests |
 | Key management design | done/partial | [KEY_MANAGEMENT.md](KEY_MANAGEMENT.md) documents 2-of-3 multisig, HSM and timelock ceremony; not executed, no Mainnet authority exists |
 | Soroban resource benchmarks | done | two `WPAY_BENCH` tests plus `pnpm measure:testnet` (RPC simulation and recorded transaction fees/sizes) |
 | Enforceable dependency checks | done | `pnpm audit --prod --audit-level=high` in CI; lockfile; transitive overrides |

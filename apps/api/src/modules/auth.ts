@@ -1,27 +1,30 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
+  Headers,
   HttpCode,
   Inject,
   Injectable,
   Module,
   Post,
+  Req,
+  Res,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ApiTags } from "@nestjs/swagger";
 import bcrypt from "bcryptjs";
 import { Keypair } from "@stellar/stellar-sdk";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import type { Request, Response } from "express";
 import {
-  RefreshTokenSchema,
   WalletChallengeSchema,
   WalletVerifySchema,
   LoginSchema,
   RegisterSchema,
   type LoginInput,
-  type RefreshTokenInput,
   type RegisterInput,
   type WalletVerifyInput,
 } from "@wpay/types";
@@ -36,6 +39,9 @@ import {
 } from "../common";
 
 const NONCE_TTL_MS = 10 * 60 * 1000;
+export const REFRESH_COOKIE = "wpay_refresh";
+export const CSRF_COOKIE = "wpay_csrf";
+export const CSRF_HEADER = "x-csrf-token";
 
 type SessionUser = {
   id: string;
@@ -45,12 +51,41 @@ type SessionUser = {
   displayName: string | null;
 };
 
+/** Response body returned to browsers. The refresh token never appears here. */
 export interface AuthSession {
   accessToken: string;
   expiresIn: number;
-  refreshToken: string;
   refreshExpiresIn: number;
+  csrfToken: string;
   user: SessionUser;
+}
+
+interface IssuedSession extends Omit<AuthSession, "csrfToken"> {
+  refreshToken: string;
+}
+
+function readCookie(request: Request, name: string): string | undefined {
+  const header = request.headers.cookie;
+  if (!header) return undefined;
+  for (const entry of header.split(";")) {
+    const separator = entry.indexOf("=");
+    if (separator === -1) continue;
+    if (entry.slice(0, separator).trim() === name) {
+      try {
+        return decodeURIComponent(entry.slice(separator + 1).trim());
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function csrfMatches(cookieValue: string | undefined, headerValue: string | undefined): boolean {
+  if (!cookieValue || !headerValue) return false;
+  const left = Buffer.from(cookieValue);
+  const right = Buffer.from(headerValue);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 function parseDurationSeconds(value: string, fallback: number): number {
@@ -89,7 +124,7 @@ export class AuthService {
     return { expiresAt: new Date(Date.now() + refreshExpiresIn * 1_000), refreshExpiresIn };
   }
 
-  private async session(user: SessionUser): Promise<AuthSession> {
+  private async session(user: SessionUser): Promise<IssuedSession> {
     const access = await this.accessToken(user);
     const refreshToken = randomBytes(48).toString("base64url");
     const { expiresAt, refreshExpiresIn } = this.refreshExpiry();
@@ -115,7 +150,7 @@ export class AuthService {
     };
   }
 
-  async register(input: RegisterInput): Promise<AuthSession> {
+  async register(input: RegisterInput): Promise<IssuedSession> {
     const email = input.email.toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new UnauthorizedException("email already registered");
@@ -131,7 +166,7 @@ export class AuthService {
     return this.session(user);
   }
 
-  async login(input: LoginInput): Promise<AuthSession> {
+  async login(input: LoginInput): Promise<IssuedSession> {
     const user = await this.prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
     // Compare against a dummy hash when the user is missing so timing does not
     // reveal whether an email exists.
@@ -146,8 +181,8 @@ export class AuthService {
    * already rotated is treated as stolen: the entire token family is revoked
    * rather than issuing a new session.
    */
-  async refresh(input: RefreshTokenInput): Promise<AuthSession> {
-    const tokenHash = hashToken(input.refreshToken);
+  async refresh(refreshToken: string): Promise<IssuedSession> {
+    const tokenHash = hashToken(refreshToken);
     const record = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
       include: { user: true },
@@ -201,12 +236,14 @@ export class AuthService {
   }
 
   /** Revoking an opaque token is idempotent; ownership is proven by the token. */
-  async logout(input: RefreshTokenInput): Promise<{ revoked: true }> {
-    const tokenHash = hashToken(input.refreshToken);
-    await this.prisma.refreshToken.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+  async logout(refreshToken: string | undefined): Promise<{ revoked: true }> {
+    if (refreshToken) {
+      const tokenHash = hashToken(refreshToken);
+      await this.prisma.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
     return { revoked: true };
   }
 
@@ -238,7 +275,7 @@ export class AuthService {
     };
   }
 
-  async verifyWallet(input: WalletVerifyInput): Promise<AuthSession> {
+  async verifyWallet(input: WalletVerifyInput): Promise<IssuedSession> {
     const record = await this.prisma.walletNonce.findUnique({ where: { nonce: input.nonce } });
     if (!record || record.address !== input.address) {
       throw new UnauthorizedException("unknown wallet challenge");
@@ -297,38 +334,121 @@ export class AuthService {
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {}
+
+  private newCsrfToken(): string {
+    return randomBytes(32).toString("base64url");
+  }
+
+  private refreshCookie(maxAgeMs: number) {
+    return {
+      httpOnly: true,
+      secure: this.config.cookies.secure,
+      sameSite: this.config.cookies.sameSite,
+      domain: this.config.cookies.domain,
+      path: "/v1/auth",
+      maxAge: maxAgeMs,
+    };
+  }
+
+  private csrfCookie(maxAgeMs: number) {
+    return {
+      httpOnly: true,
+      secure: this.config.cookies.secure,
+      sameSite: this.config.cookies.sameSite,
+      domain: this.config.cookies.domain,
+      path: "/",
+      maxAge: maxAgeMs,
+    };
+  }
+
+  private writeSession(response: Response, issued: IssuedSession, csrfToken: string): AuthSession {
+    const { refreshToken, ...session } = issued;
+    const maxAgeMs = issued.refreshExpiresIn * 1_000;
+    response.cookie(REFRESH_COOKIE, refreshToken, this.refreshCookie(maxAgeMs));
+    response.cookie(CSRF_COOKIE, csrfToken, this.csrfCookie(maxAgeMs));
+    return { ...session, csrfToken };
+  }
+
+  private clearSession(response: Response): void {
+    response.clearCookie(REFRESH_COOKIE, this.refreshCookie(0));
+    response.clearCookie(CSRF_COOKIE, this.csrfCookie(0));
+  }
+
+  private assertCsrf(request: Request, provided: string | undefined): void {
+    if (!csrfMatches(readCookie(request, CSRF_COOKIE), provided)) {
+      throw new ForbiddenException("invalid csrf token");
+    }
+  }
 
   @Public()
   @Post("register")
-  register(@Body(new ZodPipe(RegisterSchema)) input: RegisterInput): Promise<AuthSession> {
-    return this.auth.register(input);
+  async register(
+    @Body(new ZodPipe(RegisterSchema)) input: RegisterInput,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthSession> {
+    return this.writeSession(response, await this.auth.register(input), this.newCsrfToken());
   }
 
   @Public()
   @Post("login")
-  login(@Body(new ZodPipe(LoginSchema)) input: LoginInput): Promise<AuthSession> {
-    return this.auth.login(input);
+  async login(
+    @Body(new ZodPipe(LoginSchema)) input: LoginInput,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthSession> {
+    return this.writeSession(response, await this.auth.login(input), this.newCsrfToken());
+  }
+
+  @Public()
+  @Get("csrf")
+  csrf(@Res({ passthrough: true }) response: Response): { csrfToken: string } {
+    const csrfToken = this.newCsrfToken();
+    const maxAgeMs = this.config.env.JWT_REFRESH_TTL_DAYS * 86_400_000;
+    response.cookie(CSRF_COOKIE, csrfToken, this.csrfCookie(maxAgeMs));
+    return { csrfToken };
   }
 
   @Public()
   @HttpCode(200)
   @Post("refresh")
-  refresh(@Body(new ZodPipe(RefreshTokenSchema)) input: RefreshTokenInput): Promise<AuthSession> {
-    return this.auth.refresh(input);
+  async refresh(
+    @Req() request: Request,
+    @Headers(CSRF_HEADER) csrf: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthSession> {
+    const refreshToken = readCookie(request, REFRESH_COOKIE);
+    if (!refreshToken) throw new UnauthorizedException("no refresh session");
+    this.assertCsrf(request, csrf);
+    return this.writeSession(response, await this.auth.refresh(refreshToken), this.newCsrfToken());
   }
 
   @Public()
   @HttpCode(200)
   @Post("logout")
-  logout(@Body(new ZodPipe(RefreshTokenSchema)) input: RefreshTokenInput): Promise<{ revoked: true }> {
-    return this.auth.logout(input);
+  async logout(
+    @Req() request: Request,
+    @Headers(CSRF_HEADER) csrf: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ revoked: true }> {
+    const refreshToken = readCookie(request, REFRESH_COOKIE);
+    if (refreshToken) this.assertCsrf(request, csrf);
+    const result = await this.auth.logout(refreshToken);
+    this.clearSession(response);
+    return result;
   }
 
   @HttpCode(200)
   @Post("logout-all")
-  logoutAll(@CurrentUser() user: AuthUser): Promise<{ revoked: true }> {
-    return this.auth.logoutAll(user.id);
+  async logoutAll(
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ revoked: true }> {
+    const result = await this.auth.logoutAll(user.id);
+    this.clearSession(response);
+    return result;
   }
 
   @Public()
@@ -341,8 +461,11 @@ export class AuthController {
 
   @Public()
   @Post("wallet/verify")
-  verify(@Body(new ZodPipe(WalletVerifySchema)) input: WalletVerifyInput): Promise<AuthSession> {
-    return this.auth.verifyWallet(input);
+  async verify(
+    @Body(new ZodPipe(WalletVerifySchema)) input: WalletVerifyInput,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthSession> {
+    return this.writeSession(response, await this.auth.verifyWallet(input), this.newCsrfToken());
   }
 
   @Get("me")

@@ -198,9 +198,11 @@ export class WebhooksService implements OnModuleInit {
   }
 
   private async attempt(deliveryId: string): Promise<boolean> {
-    // Claim the delivery atomically so two workers cannot both send it.
+    // Claim by moving nextAttemptAt forward; the second worker's conditional
+    // update then matches zero rows. Without the timestamp predicate both
+    // workers would claim the same PENDING row and deliver twice.
     const claimed = await this.prisma.webhookDelivery.updateMany({
-      where: { id: deliveryId, status: "PENDING" },
+      where: { id: deliveryId, status: "PENDING", nextAttemptAt: { lte: new Date() } },
       data: { nextAttemptAt: new Date(Date.now() + 60_000) },
     });
     if (claimed.count === 0) return false;

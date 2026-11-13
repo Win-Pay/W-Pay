@@ -28,6 +28,7 @@ import {
   Input,
   PageHeader,
   Select,
+  Spinner,
   Stat,
   statusTone,
 } from "@wpay/ui";
@@ -88,6 +89,19 @@ export default function MerchantDashboard(): React.ReactElement {
       <main className="dash-shell">
         <Card title="Backend not configured">
           <Alert tone="error">{session.configError}</Alert>
+        </Card>
+      </main>
+    );
+  }
+
+  if (session.restoring) {
+    return (
+      <main className="dash-shell">
+        <Card title="Restoring session">
+          <div className="wp-row">
+            <Spinner />
+            <span className="wp-muted">Checking your saved sign-in…</span>
+          </div>
         </Card>
       </main>
     );

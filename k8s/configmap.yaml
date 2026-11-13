@@ -9,5 +9,7 @@ data:
   API_PORT: "4000"
   API_PUBLIC_URL: https://api.wpay.example
   WEB_PUBLIC_URL: https://pay.wpay.example
+  CORS_ORIGINS: https://pay.wpay.example,https://merchant.wpay.example,https://admin.wpay.example
+  TRUST_PROXY: "1"
   INDEXER_PORT: "4100"
   LOG_LEVEL: info
