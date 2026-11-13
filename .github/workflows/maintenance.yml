@@ -34,7 +34,8 @@ jobs:
           API_URL: https://wpay-api-six.vercel.app
         run: |
           if [ -z "$CRON_SECRET" ]; then
-            echo "::error::CRON_SECRET repository secret is not configured"; exit 1
+            echo "::warning::CRON_SECRET repository secret is not configured; skipping catch-up"
+            exit 0
           fi
           body="$RUNNER_TEMP/maintenance.json"
           status=$(curl -sS --max-time 120 -o "$body" -w '%{http_code}' \
