@@ -276,6 +276,7 @@ export class PaymentsService {
       merchantId: row.merchant.registryId,
       token: row.token,
       amount: row.amount,
+      memo: row.memo ?? "",
     });
     if (!verified) {
       throw new BadRequestException(

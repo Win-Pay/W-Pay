@@ -28,18 +28,26 @@ at `GET /v1/admin/indexer/status` and `GET /v1/admin/indexer/failures`, with
 
 For each configured contract (`Indexer.ingestContract`):
 
-1. Read the `IndexerCheckpoint` for the contract id. Start at
-   `max(checkpoint, INDEXER_START_LEDGER)`.
-2. `getEvents({ startLedger, filters: [{ type: "contract", contractIds }], limit })`.
-   The API requests `endLedger = startLedger + 5` because some RPC providers
-   return no events for an exact single-ledger range.
+1. Read the `IndexerCheckpoint` for the contract id (`lastLedger` plus the
+   RPC `cursor`). The ledger fallback is
+   `max(checkpoint.lastLedger, INDEXER_START_LEDGER)`.
+2. If the checkpoint has a cursor, call `getEvents({ cursor, filters, limit })`
+   so the pass resumes exactly where the previous page ended, including the
+   middle of a ledger. If the RPC rejects the cursor (provider retention window
+   expired), log it and fall back to
+   `getEvents({ startLedger: lastLedger + 1, filters, limit })`; duplicates are
+   absorbed by the unique event index. Without a cursor, start at `startLedger`
+   and request `endLedger = startLedger + 5`, because some RPC providers return
+   no events for an exact single-ledger range.
 3. For each event: decode topics/value, plan a projection, then in **one
    Postgres transaction** insert `IndexedEvent` and apply the projection.
 4. A duplicate `(contractId, txHash, eventIndex)` raises Prisma `P2002`; the
    transaction rolls back and the event is counted as `skipped`. A crash can
    therefore never persist an event without its projection (or vice versa).
-5. If the batch was not full, checkpoint at `latestLedger`; otherwise at the
-   last processed ledger so events in the same ledger are not skipped.
+5. Persist the new cursor and ledger. A non-full batch checkpoints at
+   `latestLedger`; a full batch keeps the last processed ledger so events in the
+   same ledger are not skipped. The checkpoint is only upserted when one of the
+   two values changed.
 
 ## Event decoding and projections
 
@@ -93,10 +101,11 @@ already linked to a different row is rejected.
 
 ## Replay and recovery
 
-- The checkpoint is per contract in `IndexerCheckpoint`.
-- To replay, set `INDEXER_START_LEDGER` to a ledger before the incident and
-  delete/reset the checkpoint row for the contract. Inserts are idempotent and
-  projections are written to converge on the event state.
+- The checkpoint is per contract in `IndexerCheckpoint` and stores both the last
+  ledger and the RPC cursor. To replay, set `INDEXER_START_LEDGER` to a ledger
+  before the incident and delete/reset the checkpoint row for the contract
+  (clearing the cursor forces ledger mode). Inserts are idempotent and
+  projections converge on the event state.
 - The database can be rebuilt from a backup and a replay plus off-chain records
   (users, merchant profiles, invoices) that do not exist on-chain.
 
@@ -111,7 +120,8 @@ between chain balances and dashboard totals.
 
 - Polling, not streaming; latency is bounded by `INDEXER_INTERVAL_MS`.
 - The RPC range workaround (`endLedger = startLedger + 5`) can re-fetch events
-  that are deduplicated by the unique index; it does not lose them.
+  that are deduplicated by the unique index; it does not lose them. An expired
+  cursor does the same when falling back to the recorded ledger.
 - Event schemas are decoded by topic order. A contract event shape change
   requires updating `decode.ts` and tests.
 - Ambiguous projections are skipped rather than guessed; they need operator

@@ -18,8 +18,10 @@ this page explains semantics and defaults. Never commit real values.
 | `API_PORT` | `4000` | HTTP port |
 | `API_PUBLIC_URL` | `http://localhost:4000` | Used in wallet-auth domain binding and links |
 | `WEB_PUBLIC_URL` | `http://localhost:3000` | Checkout links and CORS origin |
-| `JWT_EXPIRES_IN` | `1h` | Token lifetime |
-| `RATE_LIMIT_PER_MINUTE` | `120` | In-process limiter; per replica |
+| `CORS_ORIGINS` | empty | Extra comma-separated browser origins; production does not add localhost automatically |
+| `JWT_EXPIRES_IN` | `1h` | Access-token lifetime (`30m`, `1h`, `1d`, …) |
+| `JWT_REFRESH_TTL_DAYS` | `30` | Refresh-token lifetime in days |
+| `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP quota; Redis-backed when `REDIS_URL` is set |
 | `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `ADMIN_ADDRESSES` | empty | Comma-separated `G...` addresses granted admin on login |
 | `SOROBAN_SOURCE_SECRET` | empty | Only for automated flows; never commit |
@@ -56,8 +58,18 @@ are for development and are reset by the Stellar team without notice.
 
 ## Frontends
 
-`NEXT_PUBLIC_API_URL` and `VITE_API_URL` are compiled into the client bundles.
-They must be reachable from the browser and must match the API's CORS origin.
+`NEXT_PUBLIC_API_URL` is compiled into each Next.js client bundle. It must be
+the public HTTPS API origin and must appear in the API's CORS allow-list
+(`WEB_PUBLIC_URL` plus `CORS_ORIGINS`). A production build without it renders a
+configuration error; it never silently falls back to localhost. Each app has an
+`.env.example` and `vercel.json`; see [VERCEL.md](VERCEL.md).
+
+`VITE_API_URL` is the equivalent for the mobile PWA.
+
+The API returns `networkPassphrase` and `contractId` inside every transaction
+intent, so the browser does not need `NEXT_PUBLIC_STELLAR_NETWORK`,
+`NEXT_PUBLIC_STELLAR_RPC_URL` or `NEXT_PUBLIC_CONTRACT_ID`. Those values stay
+server-side in `STELLAR_NETWORK`, `STELLAR_RPC_URL` and `CONTRACT_*_ID`.
 
 ## Secrets management
 

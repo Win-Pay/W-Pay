@@ -37,7 +37,7 @@ not fully exercised; **open** = not implemented.
 | --- | --- | --- |
 | Postgres integration tests with transactions/rollbacks | done | `apps/api/src/postgres.integration.test.ts`, `blockchain.integration.test.ts`, `webhooks/webhooks.integration.test.ts` |
 | Payment/refund idempotency | done | idempotency handling in `apps/api/src/modules/payments.ts` and refund approval path |
-| API line coverage ≥80%, money paths ≥90% | done | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, platform 92.93%, auth 94.57% |
+| API line coverage ≥80%, money paths ≥90% | done | 89.4% statements; payments 90.03%, invoices 91.95%, operations 91.49%, platform 91.97%, auth 90.76% |
 | Distributed rate limiting | done | `RedisRateLimitStore` in `apps/api/src/rate-limit.store.ts`; in-process fallback warns |
 | Webhook signature/retry/DLQ tests | done | signature and timestamp checks; retry then `FAILED` dead-letter and requeue in `webhooks.integration.test.ts` |
 | Health, readiness and dependency failures | done | `/health/ready` probes Postgres and Soroban RPC (`getLatestLedger`), returning 503; storage/Redis failures propagate |

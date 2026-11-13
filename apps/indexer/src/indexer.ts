@@ -125,12 +125,38 @@ export class Indexer {
       checkpoint?.lastLedger ?? this.options.startLedger,
       this.options.startLedger,
     );
+    const filters = [{ type: "contract" as const, contractIds: [contractId] }];
 
-    const response = await this.server.getEvents({
-      startLedger,
-      filters: [{ type: "contract", contractIds: [contractId] }],
-      limit: this.options.batchSize,
-    });
+    // Cursor mode can resume in the middle of a ledger. If the RPC provider has
+    // already pruned that cursor, fall back to the last fully processed ledger;
+    // duplicate records are skipped by the unique event index.
+    let response: rpc.Api.GetEventsResponse;
+    let usedCursor = Boolean(checkpoint?.cursor);
+    if (checkpoint?.cursor) {
+      try {
+        response = await this.server.getEvents({
+          cursor: checkpoint.cursor,
+          filters,
+          limit: this.options.batchSize,
+        });
+      } catch (error) {
+        this.log(
+          `${contractId}: cursor ${checkpoint.cursor} rejected (${error instanceof Error ? error.message : String(error)}); resuming from ledger ${startLedger}`,
+        );
+        usedCursor = false;
+        response = await this.server.getEvents({
+          startLedger,
+          filters,
+          limit: this.options.batchSize,
+        });
+      }
+    } else {
+      response = await this.server.getEvents({
+        startLedger,
+        filters,
+        limit: this.options.batchSize,
+      });
+    }
 
     const events = response.events ?? [];
     let inserted = 0;
@@ -224,27 +250,35 @@ export class Indexer {
       lastLedger = Math.max(lastLedger, event.ledger);
     }
 
-    // When the batch was not full, the node has reached its latest ledger and we
-    // can safely checkpoint past empty ranges. A full batch may contain more
-    // events in the same ledger, so keep the last processed ledger instead.
+    // A partial page means the node reached the tip of the event stream and we
+    // can checkpoint past empty ranges. A full page keeps the last processed
+    // ledger, because more events may follow in the same ledger.
     const latestLedger =
       events.length < this.options.batchSize && typeof response.latestLedger === "number"
         ? response.latestLedger
         : lastLedger;
     lastLedger = Math.max(lastLedger, latestLedger);
 
+    const nextCursor =
+      typeof response.cursor === "string" && response.cursor.length > 0
+        ? response.cursor
+        : checkpoint?.cursor ?? null;
     const checkpointBefore = checkpoint?.lastLedger ?? this.options.startLedger;
-    if (events.length > 0 || lastLedger > checkpointBefore) {
+    if (
+      events.length > 0 ||
+      lastLedger > checkpointBefore ||
+      nextCursor !== (checkpoint?.cursor ?? null)
+    ) {
       await this.prisma.indexerCheckpoint.upsert({
         where: { contractId },
-        create: { contractId, lastLedger },
-        update: { lastLedger },
+        create: { contractId, lastLedger, cursor: nextCursor },
+        update: { lastLedger, cursor: nextCursor },
       });
     }
 
     if (inserted > 0 || skipped > 0) {
       this.log(
-        `${contractId}: fetched=${events.length} inserted=${inserted} skipped=${skipped} applied=${applied}`,
+        `${contractId}: fetched=${events.length} inserted=${inserted} skipped=${skipped} applied=${applied} mode=${usedCursor ? "cursor" : "ledger"}`,
       );
     }
     return { fetched: events.length, inserted, skipped, applied, failed, lastLedger };

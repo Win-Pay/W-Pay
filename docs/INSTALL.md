@@ -42,7 +42,7 @@ the environment or `.env`.
 
 ```bash
 pnpm db:generate
-pnpm db:migrate          # applies migrations/0001_init
+pnpm db:migrate          # applies migrations/0001_init … 0007_indexer_cursor
 pnpm db:seed             # creates roles, fee config, admin; prints generated password
 ```
 

@@ -21,6 +21,25 @@ message containing the domain and nonce; the client signs it with
 `signMessage` and posts the base64 signature. Login is only issued after the
 signature verifies for the claimed `G...` address.
 
+Every login, registration and wallet verification returns an `AuthSession`:
+
+```json
+{
+  "accessToken": "<jwt>",
+  "expiresIn": 3600,
+  "refreshToken": "<opaque>",
+  "refreshExpiresIn": 2592000,
+  "user": { "id": "...", "role": "MERCHANT", "stellarAddress": "G..." }
+}
+```
+
+Refresh tokens are opaque, stored only as SHA-256 hashes and grouped into a
+family. `POST /auth/refresh` rotates the token and returns a new session body;
+presenting an already-rotated token is treated as theft and revokes the whole
+family. `POST /auth/logout` revokes one token; `POST /auth/logout-all` (bearer
+auth) revokes every token for the user. Access tokens are short-lived JWTs and
+remain valid until expiry after logout, so clients must clear them locally.
+
 ## Errors
 
 ```json
@@ -41,6 +60,9 @@ contract configuration behind a success.
 | POST | `/auth/login` | Email/password → access token |
 | POST | `/auth/wallet/challenge` | Issue a signable challenge |
 | POST | `/auth/wallet/verify` | Verify signature, issue token |
+| POST | `/auth/refresh` | Rotate a refresh token |
+| POST | `/auth/logout` | Revoke one refresh token |
+| POST | `/auth/logout-all` | Revoke all refresh tokens for the user |
 | GET | `/auth/me` | Current principal and scopes |
 
 ### Merchants
@@ -52,6 +74,16 @@ contract configuration behind a success.
 | PATCH | `/merchants/:id` | Update name, settlement address, webhook URL |
 | POST | `/merchants/:id/approve` | Operator approval (on-chain tx when configured) |
 | POST | `/merchants/:id/suspend` | Suspend (on-chain tx when configured) |
+
+A merchant creating its own record (`POST /merchants`) must pass an
+`ownerAddress` equal to the `G...` wallet authenticated on the account; this
+prevents registering a merchant that pays out to an unrelated address. The fee
+is platform-controlled: non-staff requests always get the platform rate
+(250 bps), and `PATCH /merchants/:id` does not change `feeBps`. Only requests
+made by an `ADMIN`/`OPERATOR` principal may set `feeBps` at creation. Approve
+and suspend are operator-only and build an on-chain transaction when the
+merchant has a `registryId`; without contract configuration they update the
+database only and return `transaction: null`.
 
 ### Payments
 | Method | Path | Description |

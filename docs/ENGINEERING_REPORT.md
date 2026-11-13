@@ -49,11 +49,11 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 | `cargo fmt --all --manifest-path packages/contracts/Cargo.toml -- --check` | clean |
 | `pnpm contracts:build` | **16/16 WASM artifacts** (20–41 KB) |
 | `pnpm typecheck` | **22/22 tasks** pass |
-| `pnpm test` | **194 passed, 2 skipped** (api 133, indexer 25, sdk 12, shared 10, e2e 10, database 4) |
+| `pnpm test` | **199 passed, 2 skipped** (api 136, indexer 27, sdk 12, shared 10, e2e 10, database 4) |
 | `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings after removing an unused declaration |
 | `pnpm build` | 15/15 tasks: api, indexer, web, merchant, admin, mobile, extension |
 | `prisma validate` / `generate` | pass |
-| API coverage | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, platform 92.93%, auth 94.57% |
+| API coverage | 89.4% statements; payments 90.03%, invoices 91.95%, operations 91.49%, platform 91.97%, auth 90.76% |
 | `node scripts/deploy-testnet.cjs` | 16/16 contracts deployed; upload/create txs `SUCCESS`; WASM hashes 16/16 |
 | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`; balances and event verified |
 | API confirmation against Testnet | invoice PAID, payment SETTLED, contractPaymentId 1; bogus/mismatched hashes rejected |
@@ -82,6 +82,15 @@ indexer links the contract refund id; Redis rate limiting with an explicit
 in-memory fallback; DB-backed single-use wallet challenges; webhook SSRF guard;
 DB-backed API integration tests; Testnet deployment and E2E payment; k6 load
 test; automated backup plus restore drill.
+
+Fixed during the final integration pass: merchant self-service could previously
+choose `feeBps` and spoof `ownerAddress` for another wallet (now owner-bound and
+fee-locked to the platform rate); refresh tokens rotate with family-wide
+revocation on reuse; invoice confirmation binds the invocation memo to the
+invoice number; SEP-53 challenges are single-use; all three Vercel apps fail
+closed with a visible config error instead of calling localhost; production
+Compose/Caddy deployment assets and `NEXT_PUBLIC_API_URL` build configuration
+were added.
 
 Partial: mobile/extension are read-only; the hosted frontends still have no
 hosted API; monitoring configs validate but dashboards were not checked against

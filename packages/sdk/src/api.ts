@@ -15,7 +15,6 @@ import type {
   InvoiceRecord,
   LoginInput,
   MerchantRecord,
-  Page,
   PaymentRecord,
   RefundRecord,
   RegisterInput,
@@ -32,6 +31,8 @@ import { HttpClient, type ApiClientOptions, type RequestOptions } from "./http";
 export interface AuthSession {
   accessToken: string;
   expiresIn: number;
+  refreshToken: string;
+  refreshExpiresIn: number;
   user: {
     id: string;
     email: string;
@@ -116,7 +117,7 @@ export interface HealthStatus {
   uptimeSeconds: number;
   version: string;
   database: "up" | "down";
-  soroban: "configured" | "not_configured";
+  soroban: "up" | "down" | "not_configured";
   contracts: Record<string, boolean>;
 }
 
@@ -135,14 +136,34 @@ export class WPayApi {
     this.http.setApiKey(apiKey);
   }
 
+  setUnauthorizedHandler(handler: (() => Promise<string | null>) | undefined): void {
+    this.http.setUnauthorizedHandler(handler);
+  }
+
   auth = {
     register: (input: RegisterInput) =>
-      this.http.request<AuthSession>("POST", "/v1/auth/register", input),
-    login: (input: LoginInput) => this.http.request<AuthSession>("POST", "/v1/auth/login", input),
+      this.http.request<AuthSession>("POST", "/v1/auth/register", input, {
+        skipAuthRefresh: true,
+      }),
+    login: (input: LoginInput) =>
+      this.http.request<AuthSession>("POST", "/v1/auth/login", input, {
+        skipAuthRefresh: true,
+      }),
+    refresh: (refreshToken: string) =>
+      this.http.request<AuthSession>("POST", "/v1/auth/refresh", { refreshToken }, {
+        skipAuthRefresh: true,
+      }),
+    logout: (refreshToken: string) =>
+      this.http.request<{ revoked: true }>("POST", "/v1/auth/logout", { refreshToken }, {
+        skipAuthRefresh: true,
+      }),
+    logoutAll: () => this.http.request<{ revoked: true }>("POST", "/v1/auth/logout-all"),
     walletChallenge: (address: string) =>
       this.http.request<WalletChallenge>("POST", "/v1/auth/wallet/challenge", { address }),
     walletVerify: (input: WalletVerifyInput) =>
-      this.http.request<AuthSession>("POST", "/v1/auth/wallet/verify", input),
+      this.http.request<AuthSession>("POST", "/v1/auth/wallet/verify", input, {
+        skipAuthRefresh: true,
+      }),
     me: () => this.http.request<AuthSession["user"]>("GET", "/v1/auth/me"),
   };
 
@@ -232,7 +253,11 @@ export class WPayApi {
 
   subscriptions = {
     createPlan: (input: CreatePlanInput) =>
-      this.http.request<SubscriptionPlanRecord>("POST", "/v1/subscriptions/plans", input),
+      this.http.request<SubscriptionPlanRecord & { transaction: TransactionIntent | null }>(
+        "POST",
+        "/v1/subscriptions/plans",
+        input,
+      ),
     listPlans: (merchantId: string) =>
       this.http.requestPage<SubscriptionPlanRecord>("/v1/subscriptions/plans", { merchantId }),
     subscribe: (input: SubscribeInput) =>

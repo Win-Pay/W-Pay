@@ -103,6 +103,11 @@ export type RegisterInput = z.infer<typeof RegisterSchema>;
 export const LoginSchema = z.object({ email, password });
 export type LoginInput = z.infer<typeof LoginSchema>;
 
+export const RefreshTokenSchema = z.object({
+  refreshToken: z.string().min(32).max(256),
+});
+export type RefreshTokenInput = z.infer<typeof RefreshTokenSchema>;
+
 export const WalletChallengeSchema = z.object({
   address: StellarAddressSchema,
 });

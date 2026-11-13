@@ -13,6 +13,7 @@ export interface VerifiedPayment {
   token: string;
   amount: bigint;
   fee: bigint;
+  memo: string;
 }
 
 function toBigInt(value: unknown): bigint | null {
@@ -363,7 +364,13 @@ export class SorobanService {
   async verifyPaymentTransaction(
     txHash: string,
     ledger: number,
-    expected?: { payer: string; merchantId: bigint; token: string; amount: bigint },
+    expected?: {
+      payer?: string;
+      merchantId: bigint;
+      token: string;
+      amount: bigint;
+      memo?: string;
+    },
   ): Promise<VerifiedPayment | null> {
     if (!this.has("paymentRouter")) return null;
     const contractId = this.gateway.contractId("paymentRouter");
@@ -385,19 +392,25 @@ export class SorobanService {
     if (invocation.functionName().toString() !== "create_payment") return null;
 
     const args = invocation.args().map((arg) => scValToNative(arg));
-    const [argPayer, argMerchant, argToken, argAmount] = args;
+    const [argPayer, argMerchant, argToken, argAmount, argMemo] = args;
     const payerArg = typeof argPayer === "string" ? argPayer : null;
     const merchantArg = toBigInt(argMerchant);
     const tokenArg = typeof argToken === "string" ? argToken : null;
     const amountArg = toBigInt(argAmount);
-    if (!payerArg || merchantArg === null || !tokenArg || amountArg === null) return null;
+    // create_payment always carries a memo string. Rejecting a transaction
+    // without one prevents an unrelated payment being linked to an invoice.
+    const memoArg = typeof argMemo === "string" ? argMemo : null;
+    if (!payerArg || merchantArg === null || !tokenArg || amountArg === null || memoArg === null) {
+      return null;
+    }
 
     if (
       expected &&
-      (payerArg !== expected.payer ||
+      ((expected.payer !== undefined && payerArg !== expected.payer) ||
         merchantArg !== expected.merchantId ||
         tokenArg !== expected.token ||
-        amountArg !== expected.amount)
+        amountArg !== expected.amount ||
+        (expected.memo !== undefined && memoArg !== expected.memo))
     ) {
       return null;
     }
@@ -444,7 +457,11 @@ export class SorobanService {
       payer !== payerArg ||
       merchantId !== merchantArg ||
       amount !== amountArg ||
-      (expected && (payer !== expected.payer || merchantId !== expected.merchantId || amount !== expected.amount))
+      (expected !== undefined &&
+        ((expected.payer !== undefined && payer !== expected.payer) ||
+          merchantId !== expected.merchantId ||
+          amount !== expected.amount ||
+          (expected.memo !== undefined && memoArg !== expected.memo)))
     ) {
       return null;
     }
@@ -458,6 +475,7 @@ export class SorobanService {
       token: tokenArg,
       amount,
       fee,
+      memo: memoArg,
     };
   }
 

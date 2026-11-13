@@ -248,16 +248,22 @@ export class InvoicesService {
     if (outcome.status !== "SUCCESS") {
       throw new BadRequestException(`transaction is not successful (${outcome.status})`);
     }
-    const verified = await this.soroban.verifyPaymentTransaction(txHash, outcome.ledger);
+    const verified = await this.soroban.verifyPaymentTransaction(txHash, outcome.ledger, {
+      merchantId: row.merchant.registryId,
+      token: row.token,
+      amount: row.amount,
+      memo: row.number,
+    });
     if (!verified) {
       throw new BadRequestException(
-        "transaction does not contain a decodable PaymentRouter payment",
+        "transaction does not contain a PaymentRouter payment with this invoice memo",
       );
     }
     if (
       verified.merchantId !== row.merchant.registryId ||
       verified.token !== row.token ||
-      verified.amount !== row.amount
+      verified.amount !== row.amount ||
+      verified.memo !== row.number
     ) {
       throw new BadRequestException("transaction does not match this invoice");
     }

@@ -33,20 +33,31 @@ same `cargo test` invocation.
 pnpm test
 ```
 
-194 tests pass and 2 are skipped, across six packages:
+199 tests pass and 2 are skipped, across six packages:
 
 | Package | Tests | Focus |
 | --- | --- | --- |
-| `@wpay/api` | 133 | Access rules, API keys, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ, URL guard, settlement batches, plus real-Postgres integration flows for payments, refunds, subscriptions, webhooks and blockchain confirmation |
-| `@wpay/indexer` | 25 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, dead-letter retry/recovery |
-| `@wpay/sdk` | 12 | HTTP client, call builders (including settlement windows), Soroban gateway, wallet signers |
+| `@wpay/api` | 136 | Access rules, API keys, refresh-token rotation/reuse revocation, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions and webhooks |
+| `@wpay/indexer` | 27 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
+| `@wpay/sdk` | 12 | HTTP client, automatic refresh retry, call builders (including settlement windows), Soroban gateway, wallet signers |
 | `@wpay/shared` | 10 | Cursor encoding, webhook HMAC/verification, wallet messages, error mapping |
 | `@wpay/e2e` | 10 (+2 skipped) | Env-name mapping vs `.env.example`, fee/amount parity, call construction, wallet message, webhook tamper tests; live-API tests skip unless `WPAY_E2E_API_URL` is set |
 | `@wpay/database` | 4 | Cursor paging, bigint serialization, migration helpers |
 
+Without `DATABASE_URL`, the Postgres-backed files report as skipped rather than
+failing. To execute them all:
+
+```bash
+DATABASE_URL=postgresql://wpay:wpay@localhost:5432/wpay?schema=public \
+REDIS_URL=redis://localhost:6379 \
+JWT_SECRET=test-secret-that-is-long-enough-for-validation \
+RATE_LIMIT_PER_MINUTE=100000 \
+pnpm test
+```
+
 Integration tests create their own users, merchants and invoices and clean up
 afterwards. They require a reachable Postgres and run real transactions and
-rollbacks; when Postgres is unavailable the files skip rather than fail.
+rollbacks.
 
 ### Coverage
 
@@ -54,10 +65,10 @@ rollbacks; when Postgres is unavailable the files skip rather than fail.
 DATABASE_URL=... JWT_SECRET=... pnpm --filter @wpay/api test:coverage
 ```
 
-Measured 2026-11-12: **89.45% statements**, 70.22% branches, 92.54% functions.
-Payment module 90%, invoices 91.48%, operations (refunds/subscriptions) 91.27%,
-platform settlements 92.93%, auth 94.57%. The 80% overall / 90% money-path targets are enforced by review,
-not by a coverage threshold in CI.
+Measured 2026-11-13: **89.4% statements**, 71.12% branches, 92.48% functions.
+Payment module 90.03%, invoices 91.95%, operations (refunds/subscriptions)
+91.49%, platform 91.97%, auth 90.76%. The 80% overall / 90% money-path targets
+are enforced by review, not by a coverage threshold in CI.
 
 ### Playwright browser flow
 
@@ -70,9 +81,10 @@ Three Chromium tests drive the checkout page with a mocked Freighter provider
 and mocked API routes: a missing wallet is reported instead of paying, a normal
 connect/sign/submit sequence submits exactly one transaction and shows the
 confirmed hash, and a `FAILED` submission surfaces an error without marking the
-invoice paid. Measured 2026-11-12: 3 passed (21 s). The CI `browser` job runs the
-same suite. These tests exercise the UI and wallet adapter contract; they do not
-load the real Freighter extension or submit to Testnet.
+invoice paid. Measured 2026-11-13: 3 passed (25.7 s, after installing Chromium
+and its system libraries). The CI `browser` job runs the same suite. These tests
+exercise the UI and wallet adapter contract; they do not load the real Freighter
+extension or submit to Testnet.
 
 ## Soroban resource measurements
 
@@ -195,7 +207,7 @@ export REDIS_URL="redis://localhost:6379"   # optional; falls back to in-memory
 1. Start Postgres and Redis, run migrations and seed.
 2. Export the `CONTRACT_*_ID` values from `deployments/testnet.json`.
 3. `pnpm dev`.
-4. `GET /v1/health` → `database: "up"`, `soroban: "configured"`, contract flags.
+4. `GET /v1/health` → `database: "up"`, `soroban: "up"`, contract flags.
 5. Create a merchant and invoice, look it up in checkout, pay it on Testnet, then
    `POST /v1/invoices/public/:number/confirm` with the transaction hash.
 6. The invoice becomes `PAID` and the payment `SETTLED` only after the API

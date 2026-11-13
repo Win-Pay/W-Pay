@@ -2,6 +2,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  ForbiddenException,
   Get,
   Injectable,
   Module,
@@ -70,6 +71,12 @@ export class MerchantsService {
   ) {}
 
   async create(user: AuthUser, input: CreateMerchantInput): Promise<MerchantRecord> {
+    const isStaff = user.role === "ADMIN" || user.role === "OPERATOR";
+    if (!isStaff && (!user.stellarAddress || user.stellarAddress !== input.ownerAddress)) {
+      throw new ForbiddenException(
+        "ownerAddress must match the Stellar wallet authenticated for this account",
+      );
+    }
     const existing = await this.prisma.merchant.findUnique({
       where: { ownerAddress: input.ownerAddress },
     });
@@ -79,7 +86,9 @@ export class MerchantsService {
         name: input.name,
         ownerAddress: input.ownerAddress,
         settlementAddress: input.settlementAddress,
-        feeBps: input.feeBps,
+        // Self-service merchants cannot choose their own fee; only staff may
+        // override the platform rate.
+        feeBps: isStaff ? input.feeBps : 250,
         website: input.website ?? null,
         description: input.description ?? null,
         status: "PENDING",

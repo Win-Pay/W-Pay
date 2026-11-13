@@ -14,9 +14,9 @@ an independent security audit and must not be described as one.
 ## Method
 
 Manual review of entry points and state transitions, `cargo test` (140 tests,
-including two resource benchmarks), TypeScript tests (194 passed, 2 skipped),
+including two resource benchmarks), TypeScript tests (199 passed, 2 skipped),
 three Playwright checkout tests with a mocked wallet, build/typecheck of every
-package, Prisma schema validation, API coverage (89.45% statements), a real
+package, Prisma schema validation, API coverage (89.4% statements), a real
 Testnet deployment and payment, a Testnet RPC/Horizon resource measurement,
 `cargo audit`, and static checks configured in CI (CodeQL, Trivy, gitleaks,
 dependency review). Locally executed: Gitleaks (no leaks), `pnpm
@@ -25,6 +25,33 @@ Prometheus/Alertmanager config checks, and Docker image build. No fuzzing,
 formal verification, external penetration test, or mainnet test was performed.
 
 ## Findings
+
+### Closed in this review
+
+- **Merchant fee evasion and ownership spoofing — fixed.** A non-staff user could
+  previously pick `feeBps` (including `0`) when creating their own merchant, and
+  could register an `ownerAddress` that did not belong to the authenticated
+  wallet. `MerchantsService.create` now requires the owner address to equal the
+  account's verified `stellarAddress` and forces the platform rate (250 bps) for
+  every non-staff caller. `PATCH /merchants/:id` still cannot change the fee.
+  Regression coverage lives in the real-Postgres integration suite.
+- **Refresh-token theft detection — fixed.** Refresh tokens are opaque, stored
+  as SHA-256 hashes, rotated on every use and grouped into a family. Replaying a
+  rotated token revokes the whole family and returns `401`; logout and
+  logout-all revoke explicitly. Verified against a real Postgres/Redis API run.
+- **Invoice verification bound to the memo — fixed.** Confirming an invoice
+  payment now checks that the contract invocation memo equals the invoice
+  number, in addition to amount, recipient, payer and the emitted event. The
+  historical Testnet confirmation used an `e2e-invoice` memo and therefore no
+  longer satisfies invoice-level verification (it remains valid evidence that
+  the payment settled on-chain).
+- **Frontend localhost fallback — fixed.** Production builds without
+  `NEXT_PUBLIC_API_URL` render a visible configuration error instead of calling
+  a localhost API. The previously hard-coded defaults were removed from all
+  three Vercel apps.
+- **Wallet login replay — fixed.** SEP-53 challenges are single-use rows in
+  `WalletNonce` with expiry, so a captured signature cannot be replayed and any
+  replica can verify it.
 
 ### High / needs action before production
 
@@ -101,6 +128,10 @@ formal verification, external penetration test, or mainnet test was performed.
 - Fee arithmetic uses checked math and returns errors rather than trapping;
   the cap is enforced in two places.
 - API keys are stored hashed; plaintext is returned only at creation.
+- Merchant fee and owner address are server-enforced: self-service creation
+  rejects a wallet mismatch and ignores client-supplied `feeBps`.
+- Refresh-token rotation, family revocation on reuse and logout are covered by
+  tests and were exercised against a running API with real Postgres/Redis.
 - Webhook signatures are constant-time compared with a timestamp window.
 - API and frontends never report a payment settled without an on-chain result.
   Verified against Testnet: a bogus hash and a mismatched amount were rejected

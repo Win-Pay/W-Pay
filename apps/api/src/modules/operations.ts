@@ -533,7 +533,10 @@ export class SubscriptionsService {
     private readonly audit: AuditService,
   ) {}
 
-  async createPlan(user: AuthUser, input: CreatePlanInput): Promise<SubscriptionPlanRecord> {
+  async createPlan(
+    user: AuthUser,
+    input: CreatePlanInput,
+  ): Promise<SubscriptionPlanRecord & { transaction: TransactionIntent | null }> {
     const merchant = await this.prisma.merchant.findUnique({ where: { id: input.merchantId } });
     if (!merchant) throw new NotFoundException("merchant not found");
     requireMerchantAccess(user, merchant);
@@ -549,8 +552,18 @@ export class SubscriptionsService {
         planIdOnChain: undefined,
       },
     });
+    const owner = user.stellarAddress ?? merchant.ownerAddress;
+    const transaction = merchant.registryId
+      ? await this.soroban.createPlanIntent({
+          owner,
+          merchantId: merchant.registryId,
+          token: input.token,
+          amount: BigInt(input.amount),
+          intervalSecs: input.intervalSecs,
+        })
+      : null;
     await this.audit.record(user, "subscription.plan_created", "SubscriptionPlan", row.id, {});
-    return toPlan(row);
+    return { ...toPlan(row), transaction };
   }
 
   async listPlans(merchantId: string): Promise<{ items: SubscriptionPlanRecord[]; nextCursor: null }> {

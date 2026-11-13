@@ -2,8 +2,9 @@
  * Exercises the indexer projections against a real PostgreSQL database.
  * Skipped when DATABASE_URL is absent, matching the API integration suite.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Keypair } from "@stellar/stellar-sdk";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { randomBytes } from "node:crypto";
 import { PrismaClient } from "@wpay/database";
 import { Indexer, applyProjection } from "./indexer";
 import type { Projection } from "./decode";
@@ -24,6 +25,7 @@ const created = {
   subscriptions: [] as string[],
   windows: [] as string[],
   failures: [] as string[],
+  checkpoints: [] as string[],
 };
 
 function address(): string {
@@ -63,6 +65,9 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     await prisma.subscriptionPlan.deleteMany({ where: { id: { in: created.plans } } });
     await prisma.settlementWindow.deleteMany({ where: { id: { in: created.windows } } });
     await prisma.indexerFailure.deleteMany({ where: { id: { in: created.failures } } });
+    await prisma.indexerCheckpoint.deleteMany({
+      where: { contractId: { in: created.checkpoints } },
+    });
     await prisma.merchant.deleteMany({ where: { id: { in: created.merchants } } });
     await prisma.$disconnect();
   });
@@ -611,5 +616,63 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     expect(row.attempts).toBeGreaterThan(1);
     const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(unchanged.status).toBe("PENDING");
+  });
+
+  it("resumes from the persisted RPC cursor instead of skipping a ledger", async () => {
+    const contractId = StrKey.encodeContract(randomBytes(32));
+    created.checkpoints.push(contractId);
+    const getEvents = vi
+      .fn()
+      .mockResolvedValueOnce({ events: [], cursor: "cursor-1", latestLedger: 150 })
+      .mockResolvedValueOnce({ events: [], cursor: "cursor-2", latestLedger: 151 });
+    const indexer = new Indexer(prisma, {
+      rpcUrl: "http://127.0.0.1:1",
+      contracts: { paymentRouter: contractId },
+      startLedger: 100,
+      batchSize: 10,
+      logger: () => undefined,
+    });
+    Object.assign(indexer as unknown as { server: unknown }, { server: { getEvents } });
+
+    await indexer.ingestContract("paymentRouter", contractId);
+    await indexer.ingestContract("paymentRouter", contractId);
+
+    expect(getEvents.mock.calls[0]?.[0]).toMatchObject({ startLedger: 100 });
+    expect(getEvents.mock.calls[1]?.[0]).toMatchObject({ cursor: "cursor-1" });
+    expect(getEvents.mock.calls[1]?.[0]).not.toHaveProperty("startLedger");
+    const checkpoint = await prisma.indexerCheckpoint.findUniqueOrThrow({
+      where: { contractId },
+    });
+    expect(checkpoint.cursor).toBe("cursor-2");
+    expect(checkpoint.lastLedger).toBe(151);
+  });
+
+  it("falls back to the last processed ledger when a cursor expired", async () => {
+    const contractId = StrKey.encodeContract(randomBytes(32));
+    created.checkpoints.push(contractId);
+    await prisma.indexerCheckpoint.create({
+      data: { contractId, lastLedger: 240, cursor: "expired-cursor" },
+    });
+    const getEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("cursor is outside the retention window"))
+      .mockResolvedValueOnce({ events: [], cursor: "fresh-cursor", latestLedger: 241 });
+    const indexer = new Indexer(prisma, {
+      rpcUrl: "http://127.0.0.1:1",
+      contracts: { paymentRouter: contractId },
+      startLedger: 1,
+      batchSize: 10,
+      logger: () => undefined,
+    });
+    Object.assign(indexer as unknown as { server: unknown }, { server: { getEvents } });
+
+    await indexer.ingestContract("paymentRouter", contractId);
+
+    expect(getEvents.mock.calls[0]?.[0]).toMatchObject({ cursor: "expired-cursor" });
+    expect(getEvents.mock.calls[1]?.[0]).toMatchObject({ startLedger: 240 });
+    const checkpoint = await prisma.indexerCheckpoint.findUniqueOrThrow({
+      where: { contractId },
+    });
+    expect(checkpoint.cursor).toBe("fresh-cursor");
   });
 });

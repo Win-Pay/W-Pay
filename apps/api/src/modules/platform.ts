@@ -414,8 +414,13 @@ export class PlatformService {
 
   async withdrawIntent(user: AuthUser, body: { token: string; to: string; amount: string }) {
     if (user.role !== "ADMIN") throw new BadRequestException("admin role required");
+    if (!user.stellarAddress) {
+      throw new BadRequestException(
+        "the admin account has no Stellar wallet; sign in with the admin wallet to withdraw",
+      );
+    }
     const intent = await this.soroban.withdrawIntent({
-      admin: user.stellarAddress ?? body.to,
+      admin: user.stellarAddress,
       token: body.token,
       to: body.to,
       amount: BigInt(body.amount),

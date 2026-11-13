@@ -8,13 +8,14 @@ TypeScript SDK.
 
 > **Deployment status: testnet contracts verified, backend still local.**
 > All 16 contracts are deployed to Stellar Testnet with recorded ids and
-> transactions, and a full testnet payment has settled and been confirmed
-> through the API. The API, Postgres and indexer are not hosted, so the Vercel
-> frontends ([web](https://wpay-web.vercel.app),
+> transactions, and a full testnet payment has settled on-chain. The API,
+> Postgres, Redis and indexer are not hosted, so the Vercel frontends
+> ([web](https://wpay-web.vercel.app),
 > [merchant](https://wpay-merchant.vercel.app),
-> [admin](https://wpay-admin.vercel.app)) cannot look up invoices, log in or
-> take payments yet. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for the verified
-> contract ids, transaction hashes, WASM hashes and the end-to-end payment.
+> [admin](https://wpay-admin.vercel.app)) cannot log in or take payments until
+> `NEXT_PUBLIC_API_URL` points at a deployed backend. See
+> [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and transaction
+> hashes, and [docs/VERCEL.md](docs/VERCEL.md) for the exact frontend settings.
 
 ## Live deployments
 
@@ -25,25 +26,26 @@ TypeScript SDK.
 | Admin dashboard | https://wpay-admin.vercel.app | [Vercel](https://vercel.com/w-pay/wpay-admin) |
 
 All three are production deployments of the frontends only and return HTTP 200.
-They have no API or database behind them yet, so logins and invoice lookups fail
-until the backend is hosted. The contracts they would call are live on Testnet;
-the missing piece is the backend deployment, not the contracts.
+They have no API or database behind them yet, so the build-time environment must
+be set and the backend deployed before logins or payments work. The contracts
+they call are live on Testnet; the missing piece is the backend deployment, not
+the contracts.
 
 ## What is implemented
 
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented: auth, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 133 tests including real Postgres integration |
-| Database (Postgres + Prisma) | Schema, baseline migration, client, seed; transactions and rollbacks covered by integration tests |
-| Indexer | Soroban RPC event ingestion, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections |
-| TypeScript SDK | API client, Soroban gateway, contract call builders, wallet adapters, tests |
-| Customer checkout | Invoice lookup, wallet connect, signed Soroban payment submission |
-| Merchant dashboard | Login, analytics, payments, invoices, refunds |
-| Admin dashboard | Login, health, merchant approval/suspension, emergency pause intents, audit |
+| REST API (NestJS) | Implemented: auth with rotating refresh tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 136 tests including real Postgres integration |
+| Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests |
+| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections |
+| TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
+| Customer checkout | Invoice lookup, wallet connect, signed Soroban payment submission, backend-verified confirmation only |
+| Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
+| Admin dashboard | Email or wallet login, health, merchant approval/suspension, emergency pause intents, audit log, indexer failures, treasury withdrawals, settlement batches |
 | Mobile PWA | Read-only invoice lookup and payment-link sharing |
 | Browser extension (MV3) | Invoice lookup popup and checkout-link copying |
-| Infrastructure | Docker images, compose, Kubernetes manifests, Helm chart, Prometheus/Alertmanager/Grafana, Argo CD, CI + security workflows |
+| Infrastructure | Docker images, development and production Compose, Caddy HTTPS, Kubernetes manifests, Helm chart, Prometheus/Alertmanager/Grafana, Argo CD, CI + security workflows |
 
 ## What is not implemented / not verified
 
@@ -53,7 +55,11 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
 - **Testnet only.** No mainnet deployment, no real funds, no external audit.
   The Testnet deployer is a throwaway friendbot-funded key, not multisig.
 - The API, Postgres, Redis and indexer are not hosted; they run locally or via
-  Docker Compose. The hosted Vercel pages therefore cannot process payments.
+  Docker Compose. The hosted Vercel pages show a configuration error until
+  `NEXT_PUBLIC_API_URL` is set and the backend is deployed.
+- The historical Testnet payment (`db354f7f…e47d`) proves on-chain settlement and
+  fee splitting. Its memo was `e2e-invoice`, so after invoice-number memo
+  binding it no longer qualifies as an invoice-level confirmation replay.
 - Wallet flows are implemented with Freighter connect/sign/submit. Three
   Playwright checkout tests mock the provider and API; real-extension signing is
   not covered by CI.
@@ -137,9 +143,11 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` | 194 passed, 2 skipped (api 133, indexer 25, sdk 12, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.45% statements; payments 90%, invoices 91.48%, operations 91.27%, auth 94.57%, platform 92.93% |
+| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 199 passed, 2 skipped (api 136, indexer 27, sdk 12, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.4% statements, 71.12% branches, 92.48% functions; payments 90.03%, invoices 91.95%, operations 91.49%, auth 90.76%, platform 91.97% |
 | Browser tests | `pnpm test:browser` | 3 passed (mocked Freighter + API) |
+| Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, refresh rotation/reuse revocation, merchant ownership 403 |
+| Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
@@ -156,7 +164,13 @@ claim is limited to the recorded Testnet transactions in
 - Every privileged contract entry point requires authorization and an explicit
   role; see the security assumptions in each contract module.
 - API auth supports JWT, scoped API keys (`sha256`, prefix-indexed), and Stellar
-  wallet signature verification (challenge/response).
+  wallet signature verification (challenge/response, raw or SEP-53).
+- Refresh tokens are opaque, stored as SHA-256 hashes, rotated on every use, and
+  reused-token detection revokes the whole token family.
+- Self-service merchants cannot choose their own fee rate; only ADMIN/OPERATOR
+  accounts may override the platform default (250 bps).
+- Payment and invoice confirmation verifies the contract invocation arguments,
+  memo and emitted event before changing database state.
 - Webhooks are HMAC-SHA256 signed over `timestamp.body` with replay tolerance.
 
 Please read [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).

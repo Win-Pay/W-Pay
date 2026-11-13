@@ -132,6 +132,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
     fee: bigint;
     contractPaymentId: bigint;
     envelopeAmount?: bigint;
+    memo?: string;
   }): void {
     getTransaction.mockResolvedValueOnce({
       status: rpc.Api.GetTransactionStatus.SUCCESS,
@@ -141,7 +142,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         merchantId: registryId,
         token: input.token,
         amount: input.envelopeAmount ?? input.amount,
-        memo: "test",
+        memo: input.memo ?? "",
       }),
     });
     getEvents.mockResolvedValueOnce({
@@ -298,6 +299,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         amount: 10000n,
         fee: 250n,
         contractPaymentId: 123n,
+        memo: "order",
       });
       const response = await json<{ status: string; txHash: string; contractPaymentId: string }>(
         baseUrl,
@@ -442,6 +444,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         amount: 5000n,
         fee: 125n,
         contractPaymentId: 200n,
+        memo: createdInvoice.body.number,
       });
       const confirmed = await json<{
         status: string;
@@ -483,6 +486,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         amount: 9000n,
         fee: 225n,
         contractPaymentId: 202n,
+        memo: createdInvoice.body.number,
       });
       const confirmed = await json<{ status: string; paymentId: string }>(
         baseUrl,
@@ -523,6 +527,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         amount: 7000n,
         fee: 175n,
         contractPaymentId: 201n,
+        memo: createdInvoice.body.number,
       });
       const response = await json<{ message: string }>(
         baseUrl,
@@ -562,6 +567,7 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
         amount: 3000n,
         fee: 75n,
         contractPaymentId: 300n,
+        memo: "refund-me",
       });
       const confirmed = await json(baseUrl, `/payments/${walletPaymentId}/confirm`, {
         method: "POST",

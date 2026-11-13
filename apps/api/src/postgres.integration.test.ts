@@ -145,8 +145,19 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       },
     );
     expect(merchantUser.status).toBe(201);
-    userToken = merchantUser.body.accessToken;
     created.users.push(merchantUser.body.user.id);
+    // A merchant owner must authenticate the wallet they claim; bind the
+    // account to the settlement address before issuing a token.
+    await harness.prisma.user.update({
+      where: { id: merchantUser.body.user.id },
+      data: { stellarAddress: settlement },
+    });
+    const merchantLogin = await json<{ accessToken: string }>(harness.baseUrl, "/auth/login", {
+      method: "POST",
+      body: { email: `merchant.${run}@wpay.test`, password: "correct-horse-battery" },
+    });
+    expect(merchantLogin.status).toBe(201);
+    userToken = merchantLogin.body.accessToken;
   }, 60_000);
 
   afterAll(async () => {
@@ -216,6 +227,74 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(anonymous.status).toBe(401);
     });
 
+    it("issues refresh tokens, rotates them and detects reuse", async () => {
+      const email = `refresh.${run}@wpay.test`;
+      const registered = await json<{
+        accessToken: string;
+        refreshToken: string;
+        refreshExpiresIn: number;
+        user: { id: string };
+      }>(harness.baseUrl, "/auth/register", {
+        method: "POST",
+        body: { email, password: "correct-horse-battery" },
+      });
+      expect(registered.status).toBe(201);
+      expect(registered.body.accessToken.length).toBeGreaterThan(20);
+      expect(registered.body.refreshToken.length).toBeGreaterThan(32);
+      expect(registered.body.refreshExpiresIn).toBeGreaterThan(0);
+      created.users.push(registered.body.user.id);
+
+      const rotated = await json<{ accessToken: string; refreshToken: string }>(
+        harness.baseUrl,
+        "/auth/refresh",
+        {
+          method: "POST",
+          body: { refreshToken: registered.body.refreshToken },
+        },
+      );
+      expect(rotated.status).toBe(200);
+      expect(rotated.body.accessToken.length).toBeGreaterThan(20);
+      expect(rotated.body.refreshToken).not.toBe(registered.body.refreshToken);
+
+      // Presenting the old token again revokes the whole family, including the
+      // token that was just issued.
+      const reuse = await json(harness.baseUrl, "/auth/refresh", {
+        method: "POST",
+        body: { refreshToken: registered.body.refreshToken },
+      });
+      expect(reuse.status).toBe(401);
+      const afterReuse = await json(harness.baseUrl, "/auth/refresh", {
+        method: "POST",
+        body: { refreshToken: rotated.body.refreshToken },
+      });
+      expect(afterReuse.status).toBe(401);
+    });
+
+    it("revokes a refresh token on logout", async () => {
+      const session = await json<{ refreshToken: string; user: { id: string } }>(
+        harness.baseUrl,
+        "/auth/login",
+        {
+          method: "POST",
+          body: {
+            email: `admin.${run}@wpay.test`,
+            password: "correct-horse-battery",
+          },
+        },
+      );
+      expect(session.status).toBe(201);
+      const logout = await json<{ revoked: boolean }>(harness.baseUrl, "/auth/logout", {
+        method: "POST",
+        body: { refreshToken: session.body.refreshToken },
+      });
+      expect(logout.status).toBe(200);
+      const refresh = await json(harness.baseUrl, "/auth/refresh", {
+        method: "POST",
+        body: { refreshToken: session.body.refreshToken },
+      });
+      expect(refresh.status).toBe(401);
+    });
+
     it("supports a wallet challenge and rejects a forged signature", async () => {
       const keypair = Keypair.random();
       const challenge = await json<{ nonce: string }>(harness.baseUrl, "/auth/wallet/challenge", {
@@ -269,7 +348,7 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
   });
 
   describe("merchants", () => {
-    it("registers a merchant as pending", async () => {
+    it("registers a merchant as pending and ignores a self-service fee override", async () => {
       const response = await json<{ id: string; status: string; feeBps: number }>(
         harness.baseUrl,
         "/merchants",
@@ -280,7 +359,7 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
             name: `Integration ${run}`,
             ownerAddress: settlement,
             settlementAddress: settlement,
-            feeBps: 250,
+            feeBps: 0,
           },
         },
       );
@@ -289,6 +368,20 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(response.body.feeBps).toBe(250);
       merchantId = response.body.id;
       created.merchants.push(merchantId);
+    });
+
+    it("refuses to register a merchant for a wallet the caller does not control", async () => {
+      const response = await json(harness.baseUrl, "/merchants", {
+        method: "POST",
+        token: userToken,
+        body: {
+          name: `Impersonated ${run}`,
+          ownerAddress: address(),
+          settlementAddress: settlement,
+          feeBps: 250,
+        },
+      });
+      expect(response.status).toBe(403);
     });
 
     it("hides another user's merchant from the list", async () => {

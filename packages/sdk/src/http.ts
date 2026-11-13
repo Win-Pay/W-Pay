@@ -24,6 +24,11 @@ export interface ApiClientOptions {
   /** Retries only idempotent requests (GET/HEAD) and 5xx/network failures. */
   maxRetries?: number;
   timeoutMs?: number;
+  /**
+   * Called once when a request with a bearer token returns 401. Returning a
+   * fresh access token retries the request; returning null surfaces the error.
+   */
+  onUnauthorized?: () => Promise<string | null>;
 }
 
 type Query = Record<string, string | number | boolean | undefined | null>;
@@ -33,6 +38,8 @@ export interface RequestOptions {
   idempotencyKey?: string;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /** Authentication attempts must not trigger the refresh-token handler. */
+  skipAuthRefresh?: boolean;
 }
 
 export class HttpClient {
@@ -42,6 +49,7 @@ export class HttpClient {
   private readonly fetchImpl: FetchLike;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
+  private onUnauthorized?: () => Promise<string | null>;
 
   constructor(options: ApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -50,10 +58,15 @@ export class HttpClient {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.maxRetries = options.maxRetries ?? 2;
     this.timeoutMs = options.timeoutMs ?? 20_000;
+    this.onUnauthorized = options.onUnauthorized;
   }
 
   setToken(token: string | undefined): void {
     this.token = token;
+  }
+
+  setUnauthorizedHandler(handler: (() => Promise<string | null>) | undefined): void {
+    this.onUnauthorized = handler;
   }
 
   setApiKey(apiKey: string | undefined): void {
@@ -69,6 +82,7 @@ export class HttpClient {
     const url = this.buildUrl(path, options.query);
     const idempotent = method === "GET" || method === "HEAD";
     let attempt = 0;
+    let authRetried = false;
 
     for (;;) {
       attempt += 1;
@@ -76,6 +90,20 @@ export class HttpClient {
         const response = await this.once(url, method, body, options);
         if (response.status >= 500 && idempotent && attempt <= this.maxRetries) {
           continue;
+        }
+        if (
+          response.status === 401 &&
+          !authRetried &&
+          !options.skipAuthRefresh &&
+          this.token &&
+          this.onUnauthorized
+        ) {
+          authRetried = true;
+          const refreshed = await this.onUnauthorized();
+          if (refreshed) {
+            this.token = refreshed;
+            continue;
+          }
         }
         return (await this.parse<T>(response));
       } catch (error) {

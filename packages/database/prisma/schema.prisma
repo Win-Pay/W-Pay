@@ -89,8 +89,29 @@ model User {
   apiKeys       ApiKey[]
   auditLogs     AuditLog[]
   notifications Notification[]
+  refreshTokens RefreshToken[]
 
   @@index([role])
+}
+
+/// Opaque refresh tokens are stored only as SHA-256 hashes. Rotating a token
+/// revokes the old row; presenting a revoked token again is treated as reuse
+/// and revokes the whole family.
+model RefreshToken {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String    @unique
+  familyId       String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  replacedByHash String?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
 }
 
 model ApiKey {
@@ -376,6 +397,8 @@ model IndexerCheckpoint {
   id         String   @id @default(cuid())
   contractId String   @unique
   lastLedger Int
+  /// RPC paging cursor; avoids re-scanning a ledger with more events than a batch.
+  cursor     String?
   updatedAt  DateTime @updatedAt
 }
 

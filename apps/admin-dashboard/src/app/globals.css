@@ -7,6 +7,31 @@
   max-width: 420px;
   margin: 80px auto;
 }
+.admin-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 16px;
+  flex-wrap: wrap;
+}
+.admin-tab {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--wp-border);
+  background: transparent;
+  color: var(--wp-muted);
+  cursor: pointer;
+  font-size: 14px;
+}
+.admin-tab[data-active="true"] {
+  background: var(--wp-surface-2);
+  color: var(--wp-text);
+  border-color: var(--wp-primary);
+}
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
 .admin-xdr {
   font-family: var(--wp-mono);
   font-size: 11px;

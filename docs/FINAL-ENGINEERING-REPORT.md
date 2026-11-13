@@ -1,6 +1,6 @@
 # Final engineering report
 
-Date: 2026-11-12
+Date: 2026-11-12, updated 2026-11-13 after the frontend/deployment integration pass
 Repository: `/workspaces/W-Pay`
 Scope: gap closure against the engineering brief, run on the existing W-Pay
 monorepo without rebuilding or replacing working modules.
@@ -17,7 +17,7 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | On-chain confirmation | API confirmation requires a `SUCCESS` result for the expected contract call and amount; bogus hashes and mismatched amounts leave the invoice `OPEN` |
 | Indexer | Event ingestion, checkpoints, payment/refund/escrow/settlement projections documented in [INDEXER.md](INDEXER.md); idempotent upserts; durable `IndexerFailure` dead letters with automatic retry and admin visibility; transaction hash and contract ids persisted |
 | Postgres integration tests | Real Postgres suites for auth, merchants, invoices, payments, webhooks and on-chain write paths, using transactions and cleanup |
-| Coverage | API coverage **89.45% statements**, with money paths at 90% (payments), 91.48% (invoices), 91.27% (operations), 92.93% (platform settlements), 94.57% (auth) |
+| Coverage | API coverage **89.4% statements**, with money paths at 90.03% (payments), 91.95% (invoices), 91.49% (operations), 91.97% (platform settlements), 90.76% (auth) |
 | Rate limiting | Redis-backed store used when `REDIS_URL` is set; per-process fallback logs a warning |
 | Wallet challenges | Single-use, expiring challenges persisted in the `WalletNonce` table instead of process memory |
 | Webhooks | SSRF guard at registration and delivery; signature and timestamp checks; retry, dead-letter (`FAILED`) and requeue covered by integration tests |
@@ -27,6 +27,11 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | Images and supply chain | Docker bases pinned by digest, image build copies pnpm app-level `node_modules`, cosign keyless signing plus provenance/SBOM, digest-pinned CI services |
 | Dependencies | zod upgraded to 4; transitive overrides moved to `pnpm-workspace.yaml`; production audit clean |
 | Documentation | README, ROADMAP, DEPLOYMENTS, SECURITY, THREAT_MODEL, AUDIT, TESTING, DEPLOYMENT, DISASTER_RECOVERY, INDEXER and the engineering report reconciled with code and recorded results |
+| Frontend integration (2026-11-13) | All three Next apps use the shared refresh-aware session client, render a visible config error without `NEXT_PUBLIC_API_URL`, and never show payment success before backend verification; merchant onboarding, admin intent signing, webhooks, API keys and settlement batches are wired to the real API |
+| Auth hardening (2026-11-13) | Opaque refresh tokens with SHA-256 storage, rotation, family revocation on reuse, logout and logout-all; SEP-53 single-use challenges |
+| Merchant fee enforcement | Non-staff merchant creation must match the authenticated wallet and is locked to the 250 bps platform rate |
+| Invoice memo binding | Invoice confirmation verifies the contract invocation memo against the invoice number |
+| Production deployment assets | `docker-compose.prod.yml` (Postgres, Redis, one-shot migrations, API, indexer, Caddy TLS), `.env.production.example`, `infra/caddy/Caddyfile`, per-app `.env.example` and `vercel.json`; nothing was deployed |
 
 ## 2. Verification results
 
@@ -39,8 +44,8 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | API confirmation | local API + Testnet | invoice `PAID`, payment `SETTLED`, `contractPaymentId=1`; bogus hash and mismatched amount rejected |
 | Typecheck | `pnpm typecheck` | 22/22 tasks |
 | Build | `pnpm build` | API, indexer, three Next apps, mobile and extension build |
-| TypeScript tests | `pnpm test` | 194 passed, 2 skipped |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.45% statements |
+| TypeScript tests | `pnpm test` | 199 passed, 2 skipped |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.4% statements |
 | Postgres integration | `pnpm --filter @wpay/api test` with `DATABASE_URL` | real Postgres suites pass, including rollback/cleanup |
 | Lint | `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
@@ -84,6 +89,14 @@ Fixed during gap closure:
   Soroban RPC.
 - Settlement batches: operator-driven, duplicate-safe, 20-entry cap after a
   50-entry execute exceeded the local Soroban budget.
+- Merchant fee evasion and owner spoofing: self-service creation is owner-bound
+  and the fee is platform-controlled; `PATCH` cannot change it.
+- Refresh-token theft: rotation plus family revocation; replay returns `401`.
+- Invoice payment verification: memo is bound to the invoice number. The
+  historical Testnet confirmation used an `e2e-invoice` memo and no longer
+  passes invoice-level verification; it remains valid settlement evidence.
+- Frontend fail-closed configuration: no localhost fallback in production
+  builds.
 
 Open and documented in [AUDIT.md](AUDIT.md):
 

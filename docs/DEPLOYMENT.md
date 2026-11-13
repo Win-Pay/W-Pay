@@ -90,6 +90,26 @@ docker build -f infra/docker/next.Dockerfile --build-arg APP=web \
 The deploy workflow builds and pushes these, then runs `helm upgrade` from a
 protected environment.
 
+### Single-host Docker Compose
+
+For a VM or dedicated host, the repository includes a production stack with
+Postgres, password-protected Redis, a one-shot migration job, the API, the
+indexer and Caddy for automatic HTTPS:
+
+```bash
+cp .env.production.example .env.production
+# edit every value: API_DOMAIN, POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET,
+# CORS_ORIGINS, contract ids, SOROBAN_SOURCE_SECRET if used
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml ps
+```
+
+`API_DOMAIN` must already resolve to the host and ports 80/443 must be open;
+Caddy obtains and renews the certificate. Postgres and Redis are not published
+outside the Compose network. The `migrate` service must exit 0 before the API
+and indexer start. Back up `postgres-data` and keep `.env.production` out of
+version control.
+
 ## 4. Kubernetes
 
 ```bash
@@ -136,6 +156,13 @@ exceeded the local Soroban budget) and advanced through link/intents/execute.
 Then exercise one real payment on testnet end to end, with a small amount, and
 confirm the indexer writes the settled payment. Only after that should mainnet
 be considered, and only with real funds you can afford to lose.
+
+## 5b. Frontends
+
+Point each Vercel project at the API and list every origin in `CORS_ORIGINS`.
+The full procedure and exact values are in [VERCEL.md](VERCEL.md). Remember that
+`NEXT_PUBLIC_API_URL` is baked into the bundle, so changing it requires a new
+deployment.
 
 ## 6. Rollback
 

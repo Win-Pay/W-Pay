@@ -22,7 +22,8 @@ function freighter(): FreighterLike | null {
 }
 
 export default function CheckoutPage(): React.ReactElement {
-  const { api } = useSession();
+  const session = useSession();
+  const { api } = session;
   const [number, setNumber] = useState("");
   const [invoice, setInvoice] = useState<InvoiceRecord | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
@@ -103,6 +104,23 @@ export default function CheckoutPage(): React.ReactElement {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (session.configError) {
+    return (
+      <main className="wp-container checkout-shell">
+        <div className="checkout-brand">
+          <Brand />
+        </div>
+        <Card title="Checkout unavailable">
+          <Alert tone="error">{session.configError}</Alert>
+          <p className="wp-muted">
+            This deployment is missing NEXT_PUBLIC_API_URL. An operator must point it at the
+            public W-Pay API before invoices can be paid.
+          </p>
+        </Card>
+      </main>
+    );
   }
 
   return (

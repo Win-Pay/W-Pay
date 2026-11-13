@@ -42,7 +42,7 @@ describe("WPayApi", () => {
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(String(url)).toBe("https://api.wpay.test/v1/payments");
     expect(init?.method).toBe("POST");
-    expect((init?.headers as Record<string, string>)["idempotency-key"]).toBe("idem_123");
+    expect((init!.headers as Record<string, string>)["idempotency-key"]).toBe("idem_123");
   });
 
   it("sends bearer auth after login", async () => {
@@ -56,7 +56,7 @@ describe("WPayApi", () => {
     api.setToken("jwt.token.here");
     await api.payments.list({ limit: 5 });
     const [, init] = fetchImpl.mock.calls[0]!;
-    expect((init?.headers as Record<string, string>).authorization).toBe("Bearer jwt.token.here");
+    expect((init!.headers as Record<string, string>).authorization).toBe("Bearer jwt.token.here");
     expect(String(fetchImpl.mock.calls[0]![0])).toContain("limit=5");
   });
 
@@ -65,7 +65,7 @@ describe("WPayApi", () => {
     api.setApiKey("wpay_live_abc");
     await api.payments.list();
     const [, init] = fetchImpl.mock.calls[0]!;
-    expect((init?.headers as Record<string, string>)["x-api-key"]).toBe("wpay_live_abc");
+    expect((init!.headers as Record<string, string>)["x-api-key"]).toBe("wpay_live_abc");
   });
 
   it("maps API errors to ApiError", async () => {

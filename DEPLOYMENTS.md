@@ -3,25 +3,28 @@
 ## Current status
 
 **All 16 contracts are deployed to Stellar Testnet and an end-to-end payment
-has settled on-chain and been confirmed through the API.** The API, Postgres
-and indexer are not hosted; they run locally/compose only. The three frontends
-are static Vercel hosting and point at `NEXT_PUBLIC_API_URL`, so they cannot
-process payments until the backend is hosted.
+has settled on-chain.** The API, Postgres, Redis and indexer are not hosted;
+they run locally/compose only. The three frontends are static Vercel hosting and
+read `NEXT_PUBLIC_API_URL` at build time, so they show a configuration error
+until that variable points at a deployed backend.
 
 | Component | Status | Evidence |
 | --- | --- | --- |
-| Contracts | **deployed on Testnet** | 16/16 ids and transactions below; deployed 2026-11-12 |
+| Contracts | **deployed on Testnet** | 16/16 ids and transactions below; deployed 2026-11-12; instances and create txs re-checked over RPC 2026-11-13 |
 | End-to-end payment | **verified on Testnet** | tx `db354f7f…e47d`, ledger 5698164, event + balances checked |
-| API database confirmation | **verified locally** | invoice `INV-202611-E09CA2` PAID, payment SETTLED, `contractPaymentId=1` |
+| API payment confirmation | **verified locally against Testnet** | payment `SETTLED`, `contractPaymentId=1`, fee/net `250000`/`9750000`; see the invoice-memo qualification below |
 | API | not hosted | runs locally against Postgres/Redis; no public URL |
 | Indexer | not hosted | runs locally; no public URL |
 | Checkout UI | deployed (frontend only) | <https://wpay-web.vercel.app> — HTTP 200 verified 2026-11-12 |
 | Merchant dashboard | deployed (frontend only) | <https://wpay-merchant.vercel.app> — HTTP 200 verified 2026-11-12 |
 | Admin dashboard | deployed (frontend only) | <https://wpay-admin.vercel.app> — HTTP 200 verified 2026-11-12 |
 
-The live pages default to `NEXT_PUBLIC_API_URL` when set, otherwise
-`http://localhost:4000`. Because no API is hosted, invoice lookup and logins
-fail in the live pages; this is expected and is not a working payment gateway.
+The frontend bundles contain `NEXT_PUBLIC_API_URL` only when it is set at Vercel
+build time. Production builds no longer fall back to `localhost`; a missing URL
+renders a visible configuration error instead of pretending to call an API.
+Backend deployment and the exact Vercel values are documented in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and
+[docs/VERCEL.md](docs/VERCEL.md).
 
 ### Frontend deployment record
 
@@ -114,15 +117,24 @@ mainnet price guarantee.
 
 ### API confirmation (real network, real database)
 
-The running API was pointed at the Testnet contracts and the payment was
-confirmed through `POST /v1/invoices/public/:number/confirm`:
+The running API was pointed at the Testnet contracts and the recorded payment
+was confirmed through `POST /v1/payments/:id/confirm` (and the corresponding
+invoice path):
 
-- invoice `INV-202611-E09CA2` → `PAID`
 - payment → `SETTLED`, `contractPaymentId=1`, fee `250000`,
   `txHash=db354f7f…e47d`
 - Negative checks: a nonexistent hash returns `400 transaction is not
   successful (NOT_FOUND)`; the real hash with a non-matching amount returns
   `400 transaction does not match this invoice`; the invoice stays `OPEN`.
+
+**Invoice-memo qualification (2026-11-13):** the historical confirmation used
+tx `db354f7f…e47d`, whose memo is `e2e-invoice`, while invoice
+`INV-202611-E09CA2` expects its invoice number as the memo. Verification now
+binds the invocation memo to the invoice number, so this historical transaction
+does not pass current invoice-level verification. It remains valid evidence that
+the payment settled on-chain and that the API verifies contract arguments and
+events; a fresh invoice payment must be made to demonstrate the memo-binding
+path end to end.
 
 This confirms the API does not mark a payment successful without on-chain
 verification. It does not claim the hosted checkout is live: the API and

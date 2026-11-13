@@ -191,6 +191,7 @@ describe("SorobanService", () => {
         merchantId,
         token,
         amount,
+        memo: "order-7",
       });
       expect(verified).toMatchObject({
         contractPaymentId: 99n,
@@ -199,6 +200,7 @@ describe("SorobanService", () => {
         token,
         amount,
         fee,
+        memo: "order-7",
       });
 
       await expect(
@@ -207,6 +209,17 @@ describe("SorobanService", () => {
           merchantId,
           token,
           amount: amount + 1n,
+        }),
+      ).resolves.toBeNull();
+
+      // The memo binds the transaction to the invoice/payment it is meant to
+      // settle; a transaction for the right amount but another memo is rejected.
+      await expect(
+        service.verifyPaymentTransaction(txHash, 42, {
+          merchantId,
+          token,
+          amount,
+          memo: "INV-OTHER",
         }),
       ).resolves.toBeNull();
     });

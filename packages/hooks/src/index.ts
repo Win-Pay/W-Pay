@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WPayApi } from "@wpay/sdk";
-import type { WalletSigner } from "@wpay/sdk";
+import type { AuthSession, WalletSigner } from "@wpay/sdk";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -63,6 +63,30 @@ export function usePolling(callback: () => void, intervalMs: number, enabled = t
 }
 
 const TOKEN_KEY = "wpay.token";
+const REFRESH_KEY = "wpay.refresh";
+
+/**
+ * Resolves the backend URL without silently pointing production builds at
+ * localhost. A missing NEXT_PUBLIC_API_URL is a deployment error the UI must
+ * show; only local origins fall back to the development API.
+ */
+export function resolveApiBaseUrl(explicit?: string): { url: string; error: string | null } {
+  const configured =
+    explicit ||
+    (typeof process !== "undefined" ? process.env?.NEXT_PUBLIC_API_URL : undefined);
+  if (configured) return { url: configured.replace(/\/$/, ""), error: null };
+
+  const hostname =
+    typeof window !== "undefined" ? window.location.hostname : "localhost";
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return { url: "http://localhost:4000", error: null };
+  }
+  return {
+    url: "https://configuration-required.invalid",
+    error:
+      "NEXT_PUBLIC_API_URL is not configured for this deployment. Set it to the public backend URL and rebuild.",
+  };
+}
 
 export interface SessionUser {
   id: string;
@@ -76,8 +100,10 @@ export interface Session {
   api: WPayApi;
   token: string | null;
   user: SessionUser | null;
+  configError: string | null;
   setToken: (token: string | null) => void;
   setUser: (user: SessionUser | null) => void;
+  setSession: (session: AuthSession) => void;
   logout: () => void;
 }
 
@@ -86,45 +112,96 @@ export interface Session {
  * NEXT_PUBLIC_API_URL (or VITE_API_URL for the mobile app).
  */
 export function useSession(defaultApiUrl?: string): Session {
-  const apiUrl = useMemo(() => {
-    if (defaultApiUrl) return defaultApiUrl;
-    if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL;
-    }
-    return "http://localhost:4000";
-  }, [defaultApiUrl]);
+  const resolution = useMemo(() => resolveApiBaseUrl(defaultApiUrl), [defaultApiUrl]);
 
   const [token, setTokenState] = useState<string | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
 
-  const api = useMemo(() => new WPayApi({ baseUrl: apiUrl }), [apiUrl]);
+  const api = useMemo(() => new WPayApi({ baseUrl: resolution.url }), [resolution.url]);
 
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
-    if (stored) {
-      api.setToken(stored);
-      setTokenState(stored);
-    }
-  }, [api]);
+  const persist = useCallback((access: string | null, refresh: string | null) => {
+    if (typeof window === "undefined") return;
+    if (access) window.localStorage.setItem(TOKEN_KEY, access);
+    else window.localStorage.removeItem(TOKEN_KEY);
+    if (refresh) window.localStorage.setItem(REFRESH_KEY, refresh);
+    else window.localStorage.removeItem(REFRESH_KEY);
+  }, []);
 
   const setToken = useCallback(
     (next: string | null) => {
       api.setToken(next ?? undefined);
       setTokenState(next);
-      if (typeof window !== "undefined") {
-        if (next) window.localStorage.setItem(TOKEN_KEY, next);
-        else window.localStorage.removeItem(TOKEN_KEY);
-      }
+      if (!next) persist(null, null);
+      else persist(next, null);
     },
-    [api],
+    [api, persist],
   );
 
-  const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
-  }, [setToken]);
+  const setSession = useCallback(
+    (session: AuthSession) => {
+      api.setToken(session.accessToken);
+      setTokenState(session.accessToken);
+      setUser(session.user);
+      persist(session.accessToken, session.refreshToken);
+    },
+    [api, persist],
+  );
 
-  return { api, token, user, setToken, setUser, logout };
+  const refreshSession = useCallback(async (): Promise<string | null> => {
+    if (typeof window === "undefined") return null;
+    const refreshToken = window.localStorage.getItem(REFRESH_KEY);
+    if (!refreshToken) return null;
+    try {
+      const session = await api.auth.refresh(refreshToken);
+      api.setToken(session.accessToken);
+      setTokenState(session.accessToken);
+      setUser(session.user);
+      persist(session.accessToken, session.refreshToken);
+      return session.accessToken;
+    } catch {
+      api.setToken(undefined);
+      setTokenState(null);
+      setUser(null);
+      persist(null, null);
+      return null;
+    }
+  }, [api, persist]);
+
+  useEffect(() => {
+    api.setUnauthorizedHandler(refreshSession);
+    return () => api.setUnauthorizedHandler(undefined);
+  }, [api, refreshSession]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(TOKEN_KEY);
+    if (stored) {
+      api.setToken(stored);
+      setTokenState(stored);
+      return;
+    }
+    if (window.localStorage.getItem(REFRESH_KEY)) void refreshSession();
+  }, [api, refreshSession]);
+
+  const logout = useCallback(() => {
+    const refreshToken =
+      typeof window !== "undefined" ? window.localStorage.getItem(REFRESH_KEY) : null;
+    if (refreshToken) void api.auth.logout(refreshToken).catch(() => undefined);
+    api.setToken(undefined);
+    setTokenState(null);
+    setUser(null);
+    persist(null, null);
+  }, [api, persist]);
+
+  return {
+    api,
+    token,
+    user,
+    configError: resolution.error,
+    setToken,
+    setUser,
+    setSession,
+    logout,
+  };
 }
 
 /** Wallet connection state kept in localStorage; signing is delegated to the wallet. */
@@ -143,6 +220,10 @@ export interface FreighterLike {
     xdr: string,
     options: { networkPassphrase: string; address?: string },
   ) => Promise<{ signedTxXdr: string }>;
+  signMessage?: (
+    message: string,
+    options?: { address?: string },
+  ) => Promise<{ signedMessage: string; signerAddress: string }>;
 }
 
 /** Returns the injected Freighter API, if the extension is installed. */
@@ -178,6 +259,19 @@ export async function signWithFreighter(
   }
   const signed = await wallet.signTransaction(xdr, { networkPassphrase, address });
   return signed.signedTxXdr;
+}
+
+/** Signs a plain-text challenge (SEP-53) with the injected wallet. */
+export async function signMessageWithFreighter(
+  message: string,
+  address?: string,
+): Promise<string> {
+  const wallet = freighterApi();
+  if (!wallet?.signMessage) {
+    throw new Error("This wallet cannot sign messages. Use Freighter or sign in with email.");
+  }
+  const signed = await wallet.signMessage(message, { address });
+  return signed.signedMessage;
 }
 
 export function useWallet(): WalletState {
