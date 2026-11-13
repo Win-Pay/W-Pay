@@ -7,10 +7,12 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/api/package.json ./apps/api/package.json
+COPY apps/indexer/package.json ./apps/indexer/package.json
 RUN pnpm install --frozen-lockfile --filter @wpay/api... --prod=false
 
 FROM deps AS build
 COPY apps/api ./apps/api
+COPY apps/indexer ./apps/indexer
 ARG DATABASE_URL="postgresql://build:build@localhost:5432/build"
 ENV DATABASE_URL=$DATABASE_URL
 RUN pnpm --filter @wpay/api... build
@@ -22,6 +24,9 @@ COPY --from=build /repo/packages ./packages
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build /repo/apps/indexer/dist ./apps/indexer/dist
+COPY --from=build /repo/apps/indexer/package.json ./apps/indexer/package.json
+COPY --from=build /repo/apps/indexer/node_modules ./apps/indexer/node_modules
 WORKDIR /repo/apps/api
 USER node
 EXPOSE 4000
