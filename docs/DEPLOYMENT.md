@@ -189,9 +189,11 @@ need a Compose/Kubernetes worker using the same database:
   projection in sync with on-chain state.
 
 Until those run, webhook deliveries accumulate as `PENDING` and indexed reads
-lag the chain. Health still reports `database: "up"` because it checks the
-connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the build
-layout.
+lag the chain. The team is on Vercel Hobby, whose cron jobs run at most once a
+day, so a cron invocation cannot replace the 5-second webhook loop; run both
+workers on Compose/Kubernetes. Health still reports `database: "up"` because it
+checks the connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the
+build layout.
 
 ## 6. Rollback
 

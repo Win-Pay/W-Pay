@@ -20,9 +20,22 @@ fallback). All three frontends were rebuilt with
 `NEXT_PUBLIC_API_URL=https://wpay-api-six.vercel.app` and their bundles were
 inspected to contain that origin.
 
-The project also lists a `winpay.com` custom domain, but DNS for that name
-resolves to an unrelated Cloudflare/PHP site. Do not claim that domain for the
-W-Pay app until its DNS is pointed at Vercel; use the `*.vercel.app` URLs above.
+The project also lists a `winpay.com` custom domain. Vercel reports it as
+`misconfigured: true`: the name currently resolves to Cloudflare
+(`104.21.40.37`, `172.67.175.44`) and serves an unrelated PHP site, not this
+Next.js app. To attach it, at the Cloudflare DNS zone for `winpay.com` either:
+
+- set the apex `A` records to `216.198.79.1` and `64.29.17.1`, or
+- set a `CNAME` for the apex/`www` to `e80183d1a58924f7.vercel-dns-017.com`
+  (`cname.vercel-dns.com` is the fallback), with Cloudflare proxying disabled.
+
+Then click verify on the domain in the Vercel project. Until the record is
+correct, use the `*.vercel.app` URLs above; do not claim `winpay.com`.
+
+The `w-pay` team is on the Hobby plan, which only supports daily cron jobs, so
+a Vercel cron cannot substitute for the webhook worker or the indexer. Both
+need the long-running Compose/Kubernetes processes described in
+[DEPLOYMENT.md](DEPLOYMENT.md) §5c.
 
 ## 0. How the API runs on Vercel
 
