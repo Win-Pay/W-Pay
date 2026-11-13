@@ -90,7 +90,7 @@ export class AuthGuard implements CanActivate {
           email: string;
           role: UserRole;
           address: string | null;
-        }>(token);
+        }>(token, { algorithms: ["HS256"] });
         request.user = {
           id: payload.sub,
           email: payload.email,

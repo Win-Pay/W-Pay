@@ -38,6 +38,7 @@ export class CoreModule {}
     JwtModule.register({
       global: true,
       secret: config.env.JWT_SECRET,
+      signOptions: { algorithm: "HS256" },
     }),
     CoreModule,
     AuthModule,

@@ -46,6 +46,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    // body-parser errors (oversized or unparseable bodies) are plain errors
+    // carrying a 4xx status; map them instead of reporting an internal error.
+    const parserStatus =
+      (exception as { statusCode?: unknown }).statusCode ??
+      (exception as { status?: unknown }).status;
+    if (typeof parserStatus === "number" && parserStatus >= 400 && parserStatus < 500) {
+      response.status(parserStatus).json({
+        statusCode: parserStatus,
+        code: defaultCode(parserStatus),
+        message: parserStatus === 413 ? "request body too large" : "invalid request",
+      } satisfies ApiErrorBody);
+      return;
+    }
+
     this.logger.error(
       exception instanceof Error ? exception.stack ?? exception.message : String(exception),
     );
@@ -69,6 +83,8 @@ function defaultCode(status: number): string {
       return "NOT_FOUND";
     case 409:
       return "CONFLICT";
+    case 413:
+      return "PAYLOAD_TOO_LARGE";
     case 429:
       return "RATE_LIMITED";
     default:
