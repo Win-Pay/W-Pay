@@ -276,6 +276,9 @@ importers:
       '@wpay/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@wpay/indexer':
+        specifier: workspace:*
+        version: link:../indexer
       '@wpay/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

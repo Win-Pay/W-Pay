@@ -27,6 +27,8 @@ this page explains semantics and defaults. Never commit real values.
 | `REFRESH_COOKIE_SAMESITE` | `none` in production, `lax` locally | SameSite mode for refresh/CSRF cookies; `none` requires cross-site frontends |
 | `COOKIE_DOMAIN` | empty | Optional parent domain for first-party cookies |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP quota; Redis-backed when `REDIS_URL` is set |
+| `LOGIN_MAX_ATTEMPTS` | `5` | Failed sign-ins per account before a temporary lock |
+| `LOGIN_LOCKOUT_MINUTES` | `15` | Sliding window for the per-account lock; a successful login clears it |
 | `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `ADMIN_ADDRESSES` | empty | Comma-separated `G...` addresses granted admin on login |
 | `SOROBAN_SOURCE_SECRET` | empty | Only for automated flows; never commit |
@@ -65,6 +67,14 @@ are for development and are reset by the Stellar team without notice.
 | `WEBHOOK_MAX_ATTEMPTS` | `6` | Retries before dead-lettering |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Per-attempt timeout |
 | `WEBHOOK_WORKER` | `on` | Disable when running delivery separately |
+
+## Serverless cron catch-up
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CRON_SECRET` | empty | Enables `GET /v1/internal/maintenance` and authenticates the Vercel cron (`Authorization: Bearer $CRON_SECRET`); the route is hidden when unset |
+| `INDEXER_START_LEDGER` | `1` | First ledger to scan when no cursor exists |
+| `INDEXER_BATCH_SIZE` | `100` | Events fetched per contract per pass |
 
 ## Frontends
 

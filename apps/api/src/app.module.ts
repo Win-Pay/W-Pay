@@ -18,6 +18,7 @@ import { InvoicesModule } from "./modules/invoices";
 import { OperationsModule } from "./modules/operations";
 import { PlatformModule } from "./modules/platform";
 import { WebhooksModule } from "./webhooks/webhooks.controller";
+import { MaintenanceModule } from "./maintenance";
 
 const config = loadConfig();
 
@@ -48,6 +49,7 @@ export class CoreModule {}
     OperationsModule,
     PlatformModule,
     WebhooksModule,
+    MaintenanceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

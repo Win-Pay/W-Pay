@@ -6,8 +6,9 @@
   "outputDirectory": "public",
   "functions": {
     "api/index.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
+  "crons": [{ "path": "/v1/internal/maintenance", "schedule": "0 2 * * *" }],
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }

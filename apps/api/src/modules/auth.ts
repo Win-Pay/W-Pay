@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  HttpException,
   Inject,
   Injectable,
   Module,
@@ -31,6 +32,7 @@ import {
 import { buildWalletAuthMessage } from "@wpay/shared";
 import { APP_CONFIG, type AppConfig } from "../config";
 import { PrismaService } from "../prisma.service";
+import { LoginThrottle } from "../login-throttle";
 import {
   CurrentUser,
   Public,
@@ -104,11 +106,15 @@ function hashToken(token: string): string {
 
 @Injectable()
 export class AuthService {
+  private readonly throttle: LoginThrottle;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-  ) {}
+  ) {
+    this.throttle = new LoginThrottle(this.config.env);
+  }
 
   private async accessToken(user: SessionUser): Promise<{ accessToken: string; expiresIn: number }> {
     const expiresIn = parseDurationSeconds(this.config.env.JWT_EXPIRES_IN, 3_600);
@@ -167,12 +173,26 @@ export class AuthService {
   }
 
   async login(input: LoginInput): Promise<IssuedSession> {
-    const user = await this.prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
+    const email = input.email.toLowerCase();
+    const throttle = await this.throttle.record(email);
+    if (throttle.locked) {
+      throw new HttpException(
+        {
+          statusCode: 429,
+          code: "ACCOUNT_LOCKED",
+          message: "too many failed sign-in attempts; try again later",
+          retryAfter: throttle.retryAfterSeconds,
+        },
+        429,
+      );
+    }
+    const user = await this.prisma.user.findUnique({ where: { email } });
     // Compare against a dummy hash when the user is missing so timing does not
     // reveal whether an email exists.
     const hash = user?.passwordHash ?? "$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin";
     const valid = await bcrypt.compare(input.password, hash);
     if (!user || !valid) throw new UnauthorizedException("invalid email or password");
+    await this.throttle.reset(email);
     return this.session(user);
   }
 

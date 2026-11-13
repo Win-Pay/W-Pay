@@ -220,6 +220,30 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(wrongPassword.body.message).toBe(unknownEmail.body.message);
     });
 
+    it("locks an account after repeated failures, even for the right password", async () => {
+      const email = `locked.${run}@wpay.test`;
+      const registered = await json<{ user: { id: string } }>(harness.baseUrl, "/auth/register", {
+        method: "POST",
+        body: { email, password: "correct-horse-battery" },
+      });
+      expect(registered.status).toBe(201);
+      created.users.push(registered.body.user.id);
+
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const failed = await json(harness.baseUrl, "/auth/login", {
+          method: "POST",
+          body: { email, password: "not-the-password" },
+        });
+        expect(failed.status).toBe(401);
+      }
+      const locked = await json<{ code: string }>(harness.baseUrl, "/auth/login", {
+        method: "POST",
+        body: { email, password: "correct-horse-battery" },
+      });
+      expect(locked.status).toBe(429);
+      expect(locked.body.code).toBe("ACCOUNT_LOCKED");
+    });
+
     it("rejects a malformed registration body", async () => {
       const response = await json<{ code: string }>(harness.baseUrl, "/auth/register", {
         method: "POST",

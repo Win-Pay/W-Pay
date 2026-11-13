@@ -22,6 +22,8 @@ export interface RateLimitDecision {
 export interface RateLimitStore {
   /** Records one request for `key` and returns the running window state. */
   hit(key: string, windowMs: number): Promise<RateLimitDecision>;
+  /** Clears a counter, e.g. after a successful login. */
+  reset(key: string): Promise<void>;
   /** Releases resources; safe to call more than once. */
   close?(): Promise<void>;
 }
@@ -60,6 +62,10 @@ export class MemoryRateLimitStore implements RateLimitStore {
     }
   }
 
+  async reset(key: string): Promise<void> {
+    this.buckets.delete(key);
+  }
+
   size(): number {
     return this.buckets.size;
   }
@@ -71,6 +77,7 @@ export interface RedisLike {
     script: string,
     options: { keys: string[]; arguments: string[] },
   ): Promise<unknown>;
+  del?(key: string): Promise<unknown>;
   connect?(): Promise<unknown>;
   quit?(): Promise<unknown>;
   isOpen?: boolean;
@@ -129,6 +136,17 @@ export class RedisRateLimitStore implements RateLimitStore {
       this.degrade(error instanceof Error ? error.message : String(error));
       return this.fallback.hit(key, windowMs);
     }
+  }
+
+  async reset(key: string): Promise<void> {
+    try {
+      await this.ensureConnected();
+      await this.client.del?.(`${PREFIX}${key}`);
+    } catch {
+      // A missed reset only delays the next clean window; the fallback below
+      // still clears any locally tracked state.
+    }
+    await this.fallback.reset(key);
   }
 
   private async ensureConnected(): Promise<void> {

@@ -87,6 +87,8 @@ function defaultCode(status: number): string {
       return "PAYLOAD_TOO_LARGE";
     case 429:
       return "RATE_LIMITED";
+    case 502:
+      return "BAD_GATEWAY";
     default:
       return "INTERNAL";
   }

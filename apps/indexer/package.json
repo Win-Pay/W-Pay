@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "main": "./dist/main.js",
+  "exports": {
+    ".": "./dist/main.js",
+    "./indexer": {
+      "types": "./dist/indexer.d.ts",
+      "default": "./dist/indexer.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/main.ts",

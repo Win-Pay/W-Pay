@@ -23,6 +23,7 @@
     "@stellar/stellar-sdk": "16.4.1",
     "@wpay/config": "workspace:*",
     "@wpay/database": "workspace:*",
+    "@wpay/indexer": "workspace:*",
     "@wpay/sdk": "workspace:*",
     "@wpay/shared": "workspace:*",
     "@wpay/types": "workspace:*",
