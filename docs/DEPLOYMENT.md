@@ -188,17 +188,22 @@ stay resident on Vercel:
 - the contract-event indexer (`apps/indexer`), which keeps the operational
   projection in sync with on-chain state.
 
-To keep both making progress without a worker host, `vercel.json` schedules a
-daily cron (`0 2 * * *`) against `GET /v1/internal/maintenance`. The route is
-disabled unless `CRON_SECRET` is set on the project and only accepts
-`Authorization: Bearer $CRON_SECRET`; it drains up to 50 due webhook
+To keep both making progress without a worker host, two schedulers call the
+same endpoint: `vercel.json` schedules a daily cron (`0 2 * * *`) and
+`.github/workflows/maintenance.yml` runs every 15 minutes (GitHub may delay
+scheduled runs under load). Run `gh workflow run maintenance.yml` for an
+immediate pass. `GET /v1/internal/maintenance` is disabled unless
+`CRON_SECRET` is set in both Vercel and the GitHub repository secrets, and only
+accepts `Authorization: Bearer $CRON_SECRET`; it drains up to 50 due webhook
 deliveries and runs one indexer pass over every configured contract from the
-stored cursors. Hobby crons run at most once a day, so deliveries and indexed
-reads can lag up to 24 hours (refund approval keeps returning `409` until the
-refund id is linked). Run both workers on Compose/Kubernetes for real-time
-behaviour. Health still reports `database: "up"` because it checks the
-connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the build
-layout.
+stored cursors. Both operations are idempotent, so overlapping runs are safe.
+Lag is minutes rather than the day a Vercel-only cron would leave; real-time
+behaviour still needs the Compose/Kubernetes workers. Health still reports
+`database: "up"` because it checks the connection, not worker liveness. Refund
+approval records the decision even when the on-chain refund id is not indexed
+yet; once the indexer links it, `POST /v1/refunds/:id/approve-transaction`
+returns the settlement-wallet approval transaction (`409 REFUND_NOT_LINKED`
+before the link exists). See [VERCEL.md](VERCEL.md) for the build layout.
 
 ## 6. Rollback
 

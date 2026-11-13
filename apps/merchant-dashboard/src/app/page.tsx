@@ -641,9 +641,12 @@ function Refunds({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
-  const [approval, setApproval] = useState<{ xdr: string; networkPassphrase: string } | null>(
-    null,
-  );
+  const [approval, setApproval] = useState<{
+    xdr: string;
+    networkPassphrase: string;
+    refundId?: string;
+  } | null>(null);
+  const [submitted, setSubmitted] = useState<string[]>([]);
   const [signing, setSigning] = useState(false);
 
   const reload = useCallback(
@@ -659,7 +662,11 @@ function Refunds({
     void reload();
   }, [reload]);
 
-  async function signApproval(next: { xdr: string; networkPassphrase: string }): Promise<void> {
+  async function signApproval(next: {
+    xdr: string;
+    networkPassphrase: string;
+    refundId?: string;
+  }): Promise<void> {
     setSigning(true);
     setError(null);
     try {
@@ -673,6 +680,12 @@ function Refunds({
       );
       if (submitted.status !== "SUCCESS") {
         throw new Error(`transaction ${submitted.status.toLowerCase()} (${submitted.hash})`);
+      }
+      const refundId = next.refundId;
+      if (refundId) {
+        setSubmitted((previous) =>
+          previous.includes(refundId) ? previous : [...previous, refundId],
+        );
       }
       setNotice(`Refund approval confirmed on chain: ${submitted.hash}`);
       setApproval(null);
@@ -697,6 +710,7 @@ function Refunds({
       const next = {
         xdr: response.transaction.xdr,
         networkPassphrase: response.transaction.networkPassphrase,
+        refundId: id,
       };
       setApproval(next);
       if (wallet) {
@@ -708,6 +722,30 @@ function Refunds({
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "could not approve refund");
+    }
+  }
+
+  async function signRefundApproval(id: string): Promise<void> {
+    setError(null);
+    try {
+      const response = await api.refunds.approveTransaction(id);
+      const next = {
+        xdr: response.transaction.xdr,
+        networkPassphrase: response.transaction.networkPassphrase,
+        refundId: id,
+      };
+      setApproval(next);
+      if (wallet) {
+        await signApproval(next);
+      } else {
+        setNotice(
+          "Connect the settlement wallet, then sign the approval transaction.",
+        );
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "could not build the approval transaction",
+      );
     }
   }
 
@@ -781,6 +819,17 @@ function Refunds({
                         Reject
                       </Button>
                     </>
+                  ) : null}
+                  {refund.status === "APPROVED" &&
+                  refund.contractRefundId &&
+                  !submitted.includes(refund.id) ? (
+                    <Button
+                      small
+                      variant="secondary"
+                      onClick={() => void signRefundApproval(refund.id)}
+                    >
+                      Sign approval
+                    </Button>
                   ) : null}
                 </td>
               </tr>

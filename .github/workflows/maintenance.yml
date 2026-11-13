@@ -1,0 +1,47 @@
+name: Maintenance catch-up
+
+# Vercel Hobby only allows daily cron jobs, so this workflow polls the hosted
+# maintenance endpoint every 15 minutes to drain due webhook deliveries and run
+# one indexer pass per contract against the shared database. Both operations
+# are idempotent and share durable cursors, so overlapping runs with the Vercel
+# cron or a manual dispatch are safe. GitHub may delay scheduled runs under
+# load; dispatch manually for an immediate catch-up:
+#
+#   gh workflow run maintenance.yml
+#
+# The endpoint is disabled unless CRON_SECRET matches the project value.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: maintenance-catchup
+  cancel-in-progress: false
+
+jobs:
+  catch-up:
+    name: Drain webhooks and index contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the maintenance endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          API_URL: https://wpay-api-six.vercel.app
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repository secret is not configured"; exit 1
+          fi
+          body="$RUNNER_TEMP/maintenance.json"
+          status=$(curl -sS --max-time 120 -o "$body" -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$API_URL/v1/internal/maintenance")
+          cat "$body"; echo
+          if [ "$status" != "200" ]; then
+            echo "::error::maintenance endpoint returned HTTP $status"
+            exit 1
+          fi

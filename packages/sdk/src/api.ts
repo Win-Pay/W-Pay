@@ -255,6 +255,11 @@ export class WPayApi {
       this.http.request<TransactionIntent>("POST", `/v1/refunds/${id}/intent`),
     approveIntent: (id: string) =>
       this.http.request<RefundIntentResponse>("POST", `/v1/refunds/${id}/approve`),
+    approveTransaction: (id: string) =>
+      this.http.request<{ refund: RefundRecord; transaction: TransactionIntent }>(
+        "POST",
+        `/v1/refunds/${id}/approve-transaction`,
+      ),
     reject: (id: string, reason: string) =>
       this.http.request<RefundRecord>("POST", `/v1/refunds/${id}/reject`, { reason }),
   };

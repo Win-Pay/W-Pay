@@ -14,11 +14,13 @@ TypeScript SDK.
 > `/v1/health/ready` returns `ready: true`; the three frontends are deployed
 > against that origin and browser-to-API calls were verified from each one.
 > Two long-running processes do not fit a request-scoped serverless host. They
-> are now covered by a daily Vercel cron catch-up (`GET /v1/internal/maintenance`,
-> authenticated with `CRON_SECRET`), which drains due webhook deliveries and
-> runs one indexer pass from the durable cursor, so missed work is applied
-> rather than lost. Vercel Hobby allows only daily crons, so webhook delivery
-> and indexed reads can lag up to 24 hours; real-time behaviour still needs the
+> are covered by a Vercel daily cron plus a GitHub Actions catch-up every
+> 15 minutes (`.github/workflows/maintenance.yml`), both calling
+> `GET /v1/internal/maintenance` with `CRON_SECRET`. The route drains due
+> webhook deliveries and runs one indexer pass from the durable cursor, so
+> missed work is applied rather than lost; `gh workflow run maintenance.yml`
+> triggers an immediate pass. Lag is therefore minutes rather than hours
+> (GitHub can delay scheduled runs), but real-time behaviour still needs the
 > Compose/Kubernetes workers. There is no mainnet deployment and no external
 > audit. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and
 > transaction hashes, [docs/VERCEL.md](docs/VERCEL.md) for hosting details and
@@ -82,18 +84,20 @@ values. The frontends need only the build-time
 | --- | --- |
 | Neon project | `neon-citrine-compass` (free tier, `iad1`) |
 | Upstash database | `upstash-kv-indigo-marble` (free tier) |
-| Function region | `iad1`, Node.js 26 runtime, 30 s max duration |
+| Function region | `iad1`, Node.js 26 runtime, 60 s max duration |
 | Migrations | 7 applied with `prisma migrate deploy` against the unpooled URL |
 
 Serverless functions are request-scoped, so the 5-second webhook loop and the
 indexer cannot stay resident on Vercel. Instead `vercel.json` schedules a daily
-cron (`0 2 * * *`, the Hobby plan's maximum frequency) against
+cron (`0 2 * * *`, the Hobby plan's maximum frequency) and
+`.github/workflows/maintenance.yml` runs every 15 minutes, both against
 `/v1/internal/maintenance`. The endpoint requires `Authorization: Bearer
 $CRON_SECRET`, drains up to 50 due webhook deliveries and runs one indexer pass
-over all 16 contracts from the stored cursors. Work is therefore eventually
-applied, but with up to a day of lag; attach the Compose/Kubernetes workers for
-sub-minute delivery and indexing. Without `CRON_SECRET` the endpoint is hidden
-(404) and the cron does nothing.
+over all 16 contracts from the stored cursors. Work is therefore applied within
+minutes (GitHub can delay scheduled runs), not sub-second; attach the
+Compose/Kubernetes workers for real-time delivery and indexing. `gh workflow run
+maintenance.yml` forces an immediate pass. Without `CRON_SECRET` the endpoint
+is hidden (404) and both schedulers fail cleanly.
 
 ### Redeploying the hosted stack
 
@@ -131,7 +135,7 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
 | REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 164 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
-| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs daily as a Vercel cron catch-up, **not** as a 5-second worker |
+| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs as a 15-minute GitHub Actions + daily Vercel cron catch-up, **not** as a 5-second worker |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, merchant branding, transparent fee split, wallet connect/disconnect, signed Soroban payment, progress and receipt with Explorer link; success only after backend verification. A separate `/landing` page presents the product |
 | Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
@@ -148,11 +152,13 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
 - **Testnet only.** No mainnet deployment, no real funds, no external audit.
   The Testnet deployer is a throwaway friendbot-funded key, not multisig.
 - The API and database are hosted on Vercel/Neon. The **webhook delivery
-  worker and indexer** run only as a daily Vercel cron catch-up (Hobby allows
-  daily crons), so deliveries and indexed reads can lag up to 24 hours; refund
-  approval also returns `409` until the cron has linked the contract-assigned
-  refund id. Real-time behaviour needs the long-running Compose or Kubernetes
-  workers. The cron requires `CRON_SECRET` to be set on the Vercel project.
+  worker and indexer** run as a Vercel daily cron plus a GitHub Actions
+  catch-up every 15 minutes (`.github/workflows/maintenance.yml`), so
+  deliveries and indexed reads lag by minutes rather than hours
+  (GitHub can delay scheduled runs under load). Run
+  `gh workflow run maintenance.yml` for an immediate catch-up. Neither is a
+  resident worker; real-time delivery still needs the long-running Compose or
+  Kubernetes processes. Both schedulers require `CRON_SECRET`.
 - `winpay.com` is attached to `wpay-web` in Vercel but its DNS is misconfigured
   and currently serves an unrelated Cloudflare/PHP site; use the
   `*.vercel.app` URLs until the records in
@@ -168,9 +174,11 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   submission and the landing page); real-extension signing is not covered by CI.
 - The mobile app is a read-only PWA (no wallet signing), and the extension does
   not sign transactions.
-- Refund approval builds an on-chain transaction only after the indexer has
-  linked the contract-assigned refund id; until then it returns `409` rather
-  than pretending to submit.
+- Refund approval records the decision without fabricating a transaction:
+  until the indexer links the contract-assigned refund id, `POST
+  /v1/refunds/:id/approve` returns `transaction: null`. Once linked,
+  `POST /v1/refunds/:id/approve-transaction` returns the settlement-wallet
+  approval transaction to sign (`409 REFUND_NOT_LINKED` before that).
 - Redis-backed rate limiting is implemented, but deployments without `REDIS_URL`
   fall back to per-process counters and multiply the quota per replica.
 - No external security audit has occurred. The internal review in

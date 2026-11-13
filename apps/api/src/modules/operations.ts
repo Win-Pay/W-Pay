@@ -374,17 +374,7 @@ export class RefundsService {
     });
     if (!row) throw new NotFoundException("refund not found");
     if (row.status !== "PENDING") throw new ConflictException("refund is already decided");
-    if (user.stellarAddress && user.stellarAddress !== row.merchant.settlementAddress) {
-      throw new ConflictException("only the settlement wallet can approve this refund");
-    }
-    if (
-      !user.viaApiKey &&
-      user.role !== "ADMIN" &&
-      user.role !== "OPERATOR" &&
-      user.stellarAddress !== row.merchant.settlementAddress
-    ) {
-      throw new ConflictException("only the settlement wallet can approve this refund");
-    }
+    this.assertSettlementApprover(user, row.merchant.settlementAddress);
     // Refund ids are assigned by the RefundManager contract; the indexer links
     // them back to this record. Without that link there is nothing to sign and
     // no transaction is fabricated.
@@ -408,6 +398,58 @@ export class RefundsService {
       amount: row.amount.toString(),
     });
     return { refund: toRefund(updated), transaction };
+  }
+
+  /**
+   * Returns the approval transaction for a refund that was approved before the
+   * indexer linked its on-chain id, so the settlement wallet can sign it once
+   * the link exists without deciding the refund again.
+   */
+  async approveTransaction(
+    user: AuthUser,
+    id: string,
+  ): Promise<{ refund: RefundRecord; transaction: TransactionIntent }> {
+    const row = await this.prisma.refund.findUnique({
+      where: { id },
+      include: { merchant: true },
+    });
+    if (!row) throw new NotFoundException("refund not found");
+    if (row.status !== "APPROVED") {
+      throw new ConflictException("only an approved refund can be signed on chain");
+    }
+    this.assertSettlementApprover(user, row.merchant.settlementAddress);
+    if (!row.contractRefundId) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: "REFUND_NOT_LINKED",
+        message: "the on-chain refund id is not indexed yet; retry after the indexer catches up",
+      });
+    }
+    const transaction = await this.soroban.approveRefundIntent(
+      row.merchant.settlementAddress,
+      row.contractRefundId,
+    );
+    if (!transaction) {
+      throw new ConflictException("unable to build the on-chain refund approval");
+    }
+    await this.audit.record(user, "refund.approve_intent", "Refund", id, {
+      contractRefundId: row.contractRefundId.toString(),
+    });
+    return { refund: toRefund(row), transaction };
+  }
+
+  private assertSettlementApprover(user: AuthUser, settlementAddress: string): void {
+    if (user.stellarAddress && user.stellarAddress !== settlementAddress) {
+      throw new ConflictException("only the settlement wallet can approve this refund");
+    }
+    if (
+      !user.viaApiKey &&
+      user.role !== "ADMIN" &&
+      user.role !== "OPERATOR" &&
+      user.stellarAddress !== settlementAddress
+    ) {
+      throw new ConflictException("only the settlement wallet can approve this refund");
+    }
   }
 
   async reject(user: AuthUser, id: string, reason: string): Promise<RefundRecord> {
@@ -461,6 +503,11 @@ export class RefundsController {
   @Post(":id/approve")
   approve(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.refunds.approve(user, id);
+  }
+
+  @Post(":id/approve-transaction")
+  approveTransaction(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.refunds.approveTransaction(user, id);
   }
 
   @Post(":id/reject")

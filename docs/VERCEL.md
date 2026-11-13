@@ -32,11 +32,12 @@ Next.js app. To attach it, at the Cloudflare DNS zone for `winpay.com` either:
 Then click verify on the domain in the Vercel project. Until the record is
 correct, use the `*.vercel.app` URLs above; do not claim `winpay.com`.
 
-The `w-pay` team is on the Hobby plan, which only supports daily cron jobs. A
-daily `GET /v1/internal/maintenance` cron therefore drains due webhook
-deliveries and runs one indexer pass per contract as a catch-up; it cannot
-provide real-time delivery. Both long-running Compose/Kubernetes processes
-described in [DEPLOYMENT.md](DEPLOYMENT.md) §5c are still required for that.
+The `w-pay` team is on the Hobby plan, which only supports daily cron jobs.
+`GET /v1/internal/maintenance` is therefore called by that daily cron and by a
+GitHub Actions job every 15 minutes, draining due webhook deliveries and running
+one indexer pass per contract as a catch-up. It cannot provide real-time
+delivery; the long-running Compose/Kubernetes processes described in
+[DEPLOYMENT.md](DEPLOYMENT.md) §5c are still required for that.
 
 ## 0. How the API runs on Vercel
 
@@ -57,13 +58,15 @@ artifact (git-ignored). The build command:
 `vercel.json` rewrites every path to the function, so Nest's global `/v1`
 prefix is preserved. The in-process webhook delivery worker stays disabled
 (`WEBHOOK_WORKER=off`) and the indexer cannot run continuously, so a daily cron
-(`0 2 * * *`) calls `GET /v1/internal/maintenance`. That endpoint requires
-`Authorization: Bearer $CRON_SECRET` (Vercel sends it automatically when the
-variable exists; without it the route returns 404), drains due webhook
-deliveries and runs one indexer pass from the durable cursors. Hobby allows
-only daily crons, so work is caught up with up to a day of lag; attach a
-long-running worker (Compose or Kubernetes per [DEPLOYMENT.md](DEPLOYMENT.md))
-for real-time delivery and indexing.
+(`0 2 * * *`) plus a GitHub Actions job every 15 minutes
+(`.github/workflows/maintenance.yml`) call `GET /v1/internal/maintenance`.
+That endpoint requires `Authorization: Bearer $CRON_SECRET` (Vercel sends it
+automatically when the variable exists; without it the route returns 404),
+drains due webhook deliveries and runs one indexer pass from the durable
+cursors. Work is caught up within minutes (GitHub may delay scheduled runs);
+`gh workflow run maintenance.yml` forces a pass. Attach a long-running worker
+(Compose or Kubernetes per [DEPLOYMENT.md](DEPLOYMENT.md)) for real-time
+delivery and indexing.
 
 ## 1. Environment variables for a fresh deployment
 

@@ -10,6 +10,7 @@ Status legend: done / partial / not started. Nothing here is a promise of a date
 - [x] Infrastructure manifests, Helm, monitoring, CI, security scans
 - [x] Documentation and honest deployment status
 - [x] Link contract-assigned refund ids to API records so approval can build a real transaction
+- [x] Rebuild the refund approval transaction after the link appears (`POST /v1/refunds/:id/approve-transaction`)
 - [x] Shared (Redis) rate limiting with an explicit in-process fallback
 - [x] Webhook SSRF protection (DNS resolution + private/reserved address blocking)
 - [x] DB-backed API integration tests against Postgres
@@ -28,7 +29,8 @@ Status legend: done / partial / not started. Nothing here is a promise of a date
 - [ ] Fuzz/invariant testing for fee math, refunds and escrow transitions
 - [ ] Settlement worker with idempotent automatic batch execution and reconciliation report (operator-driven batch API and intents exist; automatic payout is deliberately not enabled)
 - [ ] Code-splitting for the mobile bundle
-- [ ] Hosted API, indexer and Postgres with dashboards pointing at them
+- [x] Hosted API and Postgres (Vercel/Neon) with webhook and indexer catch-up via the Vercel cron plus a 15-minute GitHub Actions job
+- [ ] Real-time worker host attached to the hosted database (Compose or Kubernetes), plus dashboards
 - [ ] Incident drill with recorded timings (backup restore is automated)
 
 ## Later

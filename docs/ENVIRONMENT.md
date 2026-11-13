@@ -72,7 +72,7 @@ are for development and are reset by the Stellar team without notice.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CRON_SECRET` | empty | Enables `GET /v1/internal/maintenance` and authenticates the Vercel cron (`Authorization: Bearer $CRON_SECRET`); the route is hidden when unset |
+| `CRON_SECRET` | empty | Enables `GET /v1/internal/maintenance` and authenticates the Vercel cron and the GitHub Actions catch-up (`Authorization: Bearer $CRON_SECRET`); set the same value as a GitHub repository secret; the route is hidden when unset |
 | `INDEXER_START_LEDGER` | `1` | First ledger to scan when no cursor exists |
 | `INDEXER_BATCH_SIZE` | `100` | Events fetched per contract per pass |
 

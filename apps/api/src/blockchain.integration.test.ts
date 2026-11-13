@@ -609,6 +609,25 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
       expect(approved.body.refund.status).toBe("APPROVED");
       expect(approved.body.refund.contractRefundId).toBe("55");
       expect(approved.body.transaction?.method).toBe("approve");
+
+      const retry = await json<{
+        refund: { status: string };
+        transaction: { method: string };
+      }>(baseUrl, `/refunds/${refundId}/approve-transaction`, {
+        method: "POST",
+        token: adminToken,
+      });
+      expect(retry.status).toBe(201);
+      expect(retry.body.refund.status).toBe("APPROVED");
+      expect(retry.body.transaction.method).toBe("approve");
+
+      const stranger = await json<{ message: string }>(
+        baseUrl,
+        `/refunds/${refundId}/approve-transaction`,
+        { method: "POST", token: walletToken },
+      );
+      expect(stranger.status).toBe(409);
+      expect(stranger.body.message).toContain("only the settlement wallet");
     });
 
     it("only lets the payer build a refund request", async () => {
@@ -707,6 +726,15 @@ describe.skipIf(!hasDatabase)("API on-chain write path", () => {
       );
       expect(replay.status).toBe(409);
       expect(replay.body.message).toContain("already decided");
+
+      const retry = await json<{ code: string; message: string }>(
+        baseUrl,
+        `/refunds/${request.body.id}/approve-transaction`,
+        { method: "POST", token: adminToken },
+      );
+      expect(retry.status).toBe(409);
+      expect(retry.body.code).toBe("REFUND_NOT_LINKED");
+      expect(retry.body.message).toContain("not indexed yet");
 
       const rejected = await json<{ message: string }>(
         baseUrl,
