@@ -241,7 +241,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, no "Backend not configured", API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
-| GitHub Actions | CI + Security workflows | green on `407fd22` (CI 43424685282, Security 43424685181) |
+| GitHub Actions | CI + Security workflows | green on `753e563` (CI 43433377078, Security 43433376873) |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
