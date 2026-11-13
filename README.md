@@ -76,8 +76,9 @@ Environment on the Vercel project: `DATABASE_URL`/`DATABASE_URL_UNPOOLED`
 (Neon), `REDIS_URL` plus the Upstash `KV_*` values, `JWT_SECRET`,
 `API_PUBLIC_URL`, `WEB_PUBLIC_URL`, `CORS_ORIGINS`, `STELLAR_NETWORK=testnet`,
 `TRUST_PROXY=1`, `REFRESH_COOKIE_SAMESITE=none`, `WEBHOOK_WORKER=off`,
-`CRON_SECRET` (enables the maintenance cron), and the 16 `CONTRACT_*_ID`
-values. The frontends need only the build-time
+`CRON_SECRET` (enables the maintenance cron; the same value must exist as a
+GitHub repository secret for the 15-minute catch-up workflow), and the 16
+`CONTRACT_*_ID` values. The frontends need only the build-time
 `NEXT_PUBLIC_API_URL`.
 
 | Resource | Value |
@@ -158,7 +159,11 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   (GitHub can delay scheduled runs under load). Run
   `gh workflow run maintenance.yml` for an immediate catch-up. Neither is a
   resident worker; real-time delivery still needs the long-running Compose or
-  Kubernetes processes. Both schedulers require `CRON_SECRET`.
+  Kubernetes processes. Both schedulers require `CRON_SECRET`. The GitHub
+  repository secret could not be created from this environment (the available
+  token cannot write Actions secrets), so add it in the repository settings
+  before relying on the 15-minute cadence; until then the workflow skips with
+  a warning and the daily Vercel cron still runs.
 - `winpay.com` is attached to `wpay-web` in Vercel but its DNS is misconfigured
   and currently serves an unrelated Cloudflare/PHP site; use the
   `*.vercel.app` URLs until the records in
@@ -260,6 +265,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
 | Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 656 ms) with the bearer secret; 401 without/with a wrong secret; 404 when unset |
+| Refund approval retry | blockchain integration suite | `POST /v1/refunds/:id/approve-transaction` returns the `approve` intent once the on-chain id is linked, `409 REFUND_NOT_LINKED` before that, and 409 for a wallet that is not the settlement wallet |
 | Hosted error mapping | oversized (300 KB) body and malformed JSON against `/v1/auth/login` | `413 PAYLOAD_TOO_LARGE` and `400 BAD_REQUEST` JSON envelopes (not `500 INTERNAL`) |
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
