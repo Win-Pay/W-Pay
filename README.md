@@ -38,13 +38,20 @@ Verified against the hosted stack on 2026-11-13:
 - `GET /v1/health` and `/v1/health/ready` return `200` with Postgres and
   Soroban RPC up; all 16 contract flags are true.
 - A login attempt for an unknown account returns `401` after a real Neon query
-  (no fallback storage).
+  (no fallback storage); a sixth failed attempt for one address returns
+  `429 ACCOUNT_LOCKED`.
 - `/v1/auth/csrf` sets a `Secure; HttpOnly; SameSite=None` cookie.
+- `GET /v1/internal/maintenance` with the cron bearer secret ran one indexer
+  pass over all 16 contracts (656 ms, no failures) and drained webhooks; the
+  same route returns `401` without the secret and is hidden (`404`) when
+  `CRON_SECRET` is unset.
 - Each frontend origin is echoed in `Access-Control-Allow-Origin`; a mutation
   from an unlisted origin returns `403 ORIGIN_FORBIDDEN`.
-- Headless Chromium loaded all three frontends and successfully called the API
-  from the page (`/v1/health` 200, `/v1/auth/csrf` 200, refresh `401` without
-  a session).
+- Headless Chromium loaded all three frontends, reported **zero CSP
+  violations**, and successfully called the API from the page (`/v1/health`
+  200, `/v1/auth/csrf` 200, refresh `401` without a session). Each response
+  carries a per-request `script-src 'nonce-…' 'strict-dynamic'` policy with no
+  `'unsafe-inline'` for scripts.
 - All 16 contract instances still exist on Testnet (read-only RPC check).
 
 The `wpay-web` project also has `winpay.com` attached, but Vercel reports the
@@ -122,7 +129,7 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 163 tests including real Postgres integration |
+| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 164 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
 | Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs daily as a Vercel cron catch-up, **not** as a 5-second worker |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
@@ -239,14 +246,15 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 227 passed, 2 skipped (api 163, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.91% statements, 72.89% branches, 92.41% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.86%, platform 91.97% |
+| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 230 passed, 2 skipped (api 164, indexer 29, sdk 13, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.78% statements, 73.07% branches, 92.43% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.86%, platform 91.97% |
 | Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
-| Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; disallowed origin 403; serverless `/docs` absent |
+| Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
+| Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 656 ms) with the bearer secret; 401 without/with a wrong secret; 404 when unset |
 | Hosted error mapping | oversized (300 KB) body and malformed JSON against `/v1/auth/login` | `413 PAYLOAD_TOO_LARGE` and `400 BAD_REQUEST` JSON envelopes (not `500 INTERNAL`) |
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
-| Hosted frontends | headless Chromium against all three URLs | pages 200, no "Backend not configured", API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
+| Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
 | GitHub Actions | CI + Security workflows | green on `753e563` (CI 43433377078, Security 43433376873) |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |

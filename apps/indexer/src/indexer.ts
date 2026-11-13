@@ -141,21 +141,13 @@ export class Indexer {
         });
       } catch (error) {
         this.log(
-          `${contractId}: cursor ${checkpoint.cursor} rejected (${error instanceof Error ? error.message : String(error)}); resuming from ledger ${startLedger}`,
+          `${contractId}: cursor ${checkpoint.cursor} rejected (${describeError(error)}); resuming from ledger ${startLedger}`,
         );
         usedCursor = false;
-        response = await this.server.getEvents({
-          startLedger,
-          filters,
-          limit: this.options.batchSize,
-        });
+        response = await this.fetchFromLedger(startLedger, filters);
       }
     } else {
-      response = await this.server.getEvents({
-        startLedger,
-        filters,
-        limit: this.options.batchSize,
-      });
+      response = await this.fetchFromLedger(startLedger, filters);
     }
 
     const events = response.events ?? [];
@@ -284,6 +276,33 @@ export class Indexer {
     return { fetched: events.length, inserted, skipped, applied, failed, lastLedger };
   }
 
+  /**
+   * Fetches from a ledger, clamping to the RPC provider's retention window.
+   * A brand-new deployment that starts at ledger 1 (or long after a cursor
+   * expired) would otherwise fail forever: Soroban RPC only retains a recent
+   * range, and events older than it are already pruned. Starting at the oldest
+   * retained ledger keeps the indexer making progress instead of erroring.
+   */
+  private async fetchFromLedger(
+    startLedger: number,
+    filters: rpc.Api.EventFilter[],
+  ): Promise<rpc.Api.GetEventsResponse> {
+    try {
+      return await this.server.getEvents({ startLedger, filters, limit: this.options.batchSize });
+    } catch (error) {
+      const range = retainedLedgerRange(describeError(error));
+      if (!range || range.oldest <= startLedger) throw error;
+      this.log(
+        `startLedger ${startLedger} is outside the retained range ${range.oldest}-${range.latest}; resuming from ${range.oldest}`,
+      );
+      return await this.server.getEvents({
+        startLedger: range.oldest,
+        filters,
+        limit: this.options.batchSize,
+      });
+    }
+  }
+
   /** Compares indexed totals with the operational ledger for one merchant. */
   async reconcile(merchantId: string): Promise<ReconcileResult> {
     const [indexedEvents, settledPayments, linkedPayments, pendingPayments] = await Promise.all([
@@ -300,6 +319,24 @@ export class Indexer {
 
 function single<T>(rows: T[]): T | null {
   return rows.length === 1 ? rows[0]! : null;
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
+/** Parses Soroban RPC's "startLedger must be within the ledger range: A - B". */
+export function retainedLedgerRange(message: string): { oldest: number; latest: number } | null {
+  const match = /ledger range:\s*(\d+)\s*-\s*(\d+)/.exec(message);
+  if (!match) return null;
+  const oldest = Number(match[1]);
+  const latest = Number(match[2]);
+  if (!Number.isFinite(oldest) || !Number.isFinite(latest)) return null;
+  return { oldest, latest };
 }
 
 async function applyPaymentSettled(

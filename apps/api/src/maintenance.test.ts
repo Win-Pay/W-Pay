@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { HttpException, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import {
   MaintenanceController,
   MaintenanceService,
@@ -89,5 +89,17 @@ describe("MaintenanceController", () => {
     const { instance, run } = controller();
     await expect(instance.run("Bearer cron-secret-value")).resolves.toMatchObject({ ok: true });
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces degraded passes with their diagnostics", async () => {
+    process.env.CRON_SECRET = "cron-secret-value";
+    const details = { ok: false, webhooks: { delivered: 0, error: "db down" } };
+    const instance = new MaintenanceController({
+      run: vi.fn().mockResolvedValue(details),
+    } as unknown as MaintenanceServiceType);
+    const error = await instance.run("Bearer cron-secret-value").catch((cause) => cause);
+    expect(error).toBeInstanceOf(HttpException);
+    expect(error.getStatus()).toBe(502);
+    expect(error.getResponse()).toMatchObject({ code: "MAINTENANCE_DEGRADED", details });
   });
 });

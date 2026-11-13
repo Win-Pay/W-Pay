@@ -18,6 +18,19 @@ import { Public } from "./common";
 import { WebhooksModule } from "./webhooks/webhooks.controller";
 import { WebhooksService } from "./webhooks/webhooks.service";
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    if ("message" in error) return String((error as { message: unknown }).message);
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 function secretMatches(header: string | undefined, secret: string): boolean {
   if (!header) return false;
   const provided = Buffer.from(header);
@@ -52,7 +65,7 @@ export class MaintenanceService {
     try {
       delivered = await this.webhooks.drain(50);
     } catch (error) {
-      webhookError = error instanceof Error ? error.message : String(error);
+      webhookError = describeError(error);
       this.logger.warn(`webhook drain failed: ${webhookError}`);
     }
 
@@ -74,7 +87,7 @@ export class MaintenanceService {
         failed: results.reduce((sum, result) => sum + result.failed, 0),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = describeError(error);
       indexer = { error: message };
       this.logger.warn(`indexer pass failed: ${message}`);
     }
@@ -102,7 +115,15 @@ export class MaintenanceController {
     }
     const result = await this.maintenance.run();
     if (!result.ok) {
-      throw new HttpException({ ...result }, 502);
+      throw new HttpException(
+        {
+          statusCode: 502,
+          code: "MAINTENANCE_DEGRADED",
+          message: "maintenance pass completed with errors",
+          details: result,
+        },
+        502,
+      );
     }
     return result;
   }
