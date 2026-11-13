@@ -1,17 +1,73 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotFoundException, UnauthorizedException } from "@nestjs/common";
-import { MaintenanceController, type MaintenanceService } from "./maintenance";
+import {
+  MaintenanceController,
+  MaintenanceService,
+  type MaintenanceService as MaintenanceServiceType,
+} from "./maintenance";
+import type { AppConfig } from "./config";
+import type { PrismaService } from "./prisma.service";
+import type { WebhooksService } from "./webhooks/webhooks.service";
+
+const indexerResults = [
+  { fetched: 3, inserted: 2, skipped: 0, applied: 1, failed: 0, lastLedger: 42 },
+];
+
+vi.mock("@wpay/indexer/indexer", () => ({
+  Indexer: class {
+    async runOnce() {
+      return indexerResults;
+    }
+  },
+}));
+
+function service(overrides: { drain?: () => Promise<number> } = {}) {
+  const drain = vi.fn(overrides.drain ?? (async () => 2));
+  const instance = new MaintenanceService(
+    {} as PrismaService,
+    { drain } as unknown as WebhooksService,
+    {
+      env: { STELLAR_RPC_URL: "https://rpc.example" },
+      network: { rpcUrl: "https://fallback.example" },
+      contracts: { paymentRouter: "C_PAYMENT" },
+    } as unknown as AppConfig,
+  );
+  return { drain, instance };
+}
 
 function controller() {
   const run = vi.fn().mockResolvedValue({ ok: true, webhooks: { delivered: 0 } });
   return {
     run,
-    instance: new MaintenanceController({ run } as unknown as MaintenanceService),
+    instance: new MaintenanceController({ run } as unknown as MaintenanceServiceType),
   };
 }
 
 afterEach(() => {
   delete process.env.CRON_SECRET;
+});
+
+describe("MaintenanceService", () => {
+  it("drains webhooks and summarizes the indexer pass", async () => {
+    const { instance } = service();
+    await expect(instance.run()).resolves.toMatchObject({
+      ok: true,
+      webhooks: { delivered: 2, error: null },
+      indexer: { contracts: 1, fetched: 3, inserted: 2, applied: 1, failed: 0 },
+    });
+  });
+
+  it("reports a webhook failure without skipping the indexer", async () => {
+    const { instance } = service({
+      drain: async () => {
+        throw new Error("database unavailable");
+      },
+    });
+    const result = await instance.run();
+    expect(result.ok).toBe(false);
+    expect(result.webhooks).toMatchObject({ delivered: 0, error: "database unavailable" });
+    expect(result.indexer).toMatchObject({ fetched: 3 });
+  });
 });
 
 describe("MaintenanceController", () => {

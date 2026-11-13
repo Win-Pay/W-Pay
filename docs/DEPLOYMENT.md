@@ -181,19 +181,24 @@ Neon Postgres, Upstash Redis and all 16 Testnet contract ids. The three
 frontends are rebuilt against it. `GET /v1/health` and `/v1/health/ready` were
 verified against the live database and Soroban RPC on 2026-11-13.
 
-Serverless functions are request-scoped, so two long-running processes still
-need a Compose/Kubernetes worker using the same database:
+Serverless functions are request-scoped, so two long-running processes cannot
+stay resident on Vercel:
 
 - the webhook delivery worker (the Vercel deployment sets `WEBHOOK_WORKER=off`);
 - the contract-event indexer (`apps/indexer`), which keeps the operational
   projection in sync with on-chain state.
 
-Until those run, webhook deliveries accumulate as `PENDING` and indexed reads
-lag the chain. The team is on Vercel Hobby, whose cron jobs run at most once a
-day, so a cron invocation cannot replace the 5-second webhook loop; run both
-workers on Compose/Kubernetes. Health still reports `database: "up"` because it
-checks the connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the
-build layout.
+To keep both making progress without a worker host, `vercel.json` schedules a
+daily cron (`0 2 * * *`) against `GET /v1/internal/maintenance`. The route is
+disabled unless `CRON_SECRET` is set on the project and only accepts
+`Authorization: Bearer $CRON_SECRET`; it drains up to 50 due webhook
+deliveries and runs one indexer pass over every configured contract from the
+stored cursors. Hobby crons run at most once a day, so deliveries and indexed
+reads can lag up to 24 hours (refund approval keeps returning `409` until the
+refund id is linked). Run both workers on Compose/Kubernetes for real-time
+behaviour. Health still reports `database: "up"` because it checks the
+connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the build
+layout.
 
 ## 6. Rollback
 

@@ -13,12 +13,15 @@ TypeScript SDK.
 > `/v1/health` reports `database: "up"`, `soroban: "up"` and every contract;
 > `/v1/health/ready` returns `ready: true`; the three frontends are deployed
 > against that origin and browser-to-API calls were verified from each one.
-> Two long-running processes are **not** hosted: the webhook delivery worker
-> (`WEBHOOK_WORKER=off`) and the contract-event indexer. Both need a worker
-> process (Compose or Kubernetes) against the same database. There is no
-> mainnet deployment and no external audit. See
-> [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and transaction
-> hashes, [docs/VERCEL.md](docs/VERCEL.md) for hosting details and
+> Two long-running processes do not fit a request-scoped serverless host. They
+> are now covered by a daily Vercel cron catch-up (`GET /v1/internal/maintenance`,
+> authenticated with `CRON_SECRET`), which drains due webhook deliveries and
+> runs one indexer pass from the durable cursor, so missed work is applied
+> rather than lost. Vercel Hobby allows only daily crons, so webhook delivery
+> and indexed reads can lag up to 24 hours; real-time behaviour still needs the
+> Compose/Kubernetes workers. There is no mainnet deployment and no external
+> audit. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and
+> transaction hashes, [docs/VERCEL.md](docs/VERCEL.md) for hosting details and
 > [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the worker runbook.
 
 ## Live deployments
@@ -63,8 +66,9 @@ bundle → static `public/`.
 Environment on the Vercel project: `DATABASE_URL`/`DATABASE_URL_UNPOOLED`
 (Neon), `REDIS_URL` plus the Upstash `KV_*` values, `JWT_SECRET`,
 `API_PUBLIC_URL`, `WEB_PUBLIC_URL`, `CORS_ORIGINS`, `STELLAR_NETWORK=testnet`,
-`TRUST_PROXY=1`, `REFRESH_COOKIE_SAMESITE=none`, `WEBHOOK_WORKER=off`, and the
-16 `CONTRACT_*_ID` values. The frontends need only the build-time
+`TRUST_PROXY=1`, `REFRESH_COOKIE_SAMESITE=none`, `WEBHOOK_WORKER=off`,
+`CRON_SECRET` (enables the maintenance cron), and the 16 `CONTRACT_*_ID`
+values. The frontends need only the build-time
 `NEXT_PUBLIC_API_URL`.
 
 | Resource | Value |
@@ -74,12 +78,15 @@ Environment on the Vercel project: `DATABASE_URL`/`DATABASE_URL_UNPOOLED`
 | Function region | `iad1`, Node.js 26 runtime, 30 s max duration |
 | Migrations | 7 applied with `prisma migrate deploy` against the unpooled URL |
 
-Serverless functions are request-scoped, and the `w-pay` team is on Vercel
-Hobby (daily-only cron), so a cron cannot replace the 5-second webhook loop or
-the indexer. Those workers are not running in the hosted environment; webhook
-deliveries stay `PENDING` and indexed reads lag the chain until a worker host is
-attached. Health still reports `database: "up"` because it checks the
-connection, not worker liveness.
+Serverless functions are request-scoped, so the 5-second webhook loop and the
+indexer cannot stay resident on Vercel. Instead `vercel.json` schedules a daily
+cron (`0 2 * * *`, the Hobby plan's maximum frequency) against
+`/v1/internal/maintenance`. The endpoint requires `Authorization: Bearer
+$CRON_SECRET`, drains up to 50 due webhook deliveries and runs one indexer pass
+over all 16 contracts from the stored cursors. Work is therefore eventually
+applied, but with up to a day of lag; attach the Compose/Kubernetes workers for
+sub-minute delivery and indexing. Without `CRON_SECRET` the endpoint is hidden
+(404) and the cron does nothing.
 
 ### Redeploying the hosted stack
 
@@ -115,9 +122,9 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers and rotating tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 153 tests including real Postgres integration |
+| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 163 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
-| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented, but **not hosted** on Vercel |
+| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs daily as a Vercel cron catch-up, **not** as a 5-second worker |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, merchant branding, transparent fee split, wallet connect/disconnect, signed Soroban payment, progress and receipt with Explorer link; success only after backend verification. A separate `/landing` page presents the product |
 | Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
@@ -133,12 +140,12 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
 
 - **Testnet only.** No mainnet deployment, no real funds, no external audit.
   The Testnet deployer is a throwaway friendbot-funded key, not multisig.
-- The API and database are hosted on Vercel/Neon, but the **webhook delivery
-  worker and indexer are not hosted**. Webhook deliveries stay `PENDING` and
-  indexed reads lag the chain until a long-running worker (Compose or
-  Kubernetes) is attached to the same database; refund approval also returns
-  `409` until the indexer has linked the contract-assigned refund id. Vercel
-  Hobby crons run at most daily, so they are not a substitute.
+- The API and database are hosted on Vercel/Neon. The **webhook delivery
+  worker and indexer** run only as a daily Vercel cron catch-up (Hobby allows
+  daily crons), so deliveries and indexed reads can lag up to 24 hours; refund
+  approval also returns `409` until the cron has linked the contract-assigned
+  refund id. Real-time behaviour needs the long-running Compose or Kubernetes
+  workers. The cron requires `CRON_SECRET` to be set on the Vercel project.
 - `winpay.com` is attached to `wpay-web` in Vercel but its DNS is misconfigured
   and currently serves an unrelated Cloudflare/PHP site; use the
   `*.vercel.app` URLs until the records in
@@ -232,8 +239,8 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 217 passed, 2 skipped (api 153, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.79% statements, 72.89% branches, 92.44% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.41%, platform 91.97% |
+| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 227 passed, 2 skipped (api 163, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.91% statements, 72.89% branches, 92.41% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.86%, platform 91.97% |
 | Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; disallowed origin 403; serverless `/docs` absent |
@@ -264,6 +271,12 @@ behaviour is claimed.
   wallet signature verification (challenge/response, raw or SEP-53). Access
   tokens are signed and verified with `HS256` only, so a token carrying a
   different `alg` header is rejected even if the secret would validate it.
+- Failed sign-ins are counted per account in Redis (`LOGIN_MAX_ATTEMPTS=5` in
+  `LOGIN_LOCKOUT_MINUTES=15`); the next attempt returns `429 ACCOUNT_LOCKED`
+  even with the correct password, and a successful sign-in clears the counter.
+  Unknown addresses are counted the same way, so the lock does not reveal which
+  accounts exist. This complements the per-IP request quota against
+  distributed password guessing.
 - Refresh tokens are opaque, stored as SHA-256 hashes, rotated on every use, and
   reused-token detection revokes the whole token family. They are delivered as
   `HttpOnly`, `Secure` cookies scoped to `/v1/auth`; refresh and logout require a
@@ -288,8 +301,15 @@ behaviour is claimed.
   `400 BAD_REQUEST`) instead of being reported as `500 INTERNAL`.
 - Webhooks are HMAC-SHA256 signed over `timestamp.body` with replay tolerance.
 - All three Next apps send CSP, `X-Frame-Options: DENY`, nosniff,
-  referrer-policy and permissions-policy headers in production. The browser
-  extension requests host access only for the API origin the user configures.
+  referrer-policy and permissions-policy headers in production. The CSP is
+  built per request with a nonce (`script-src 'nonce-…' 'strict-dynamic'`), so
+  no `'unsafe-inline'` is allowed for scripts; Next stamps the nonce onto its
+  script tags because the root layout reads request headers. Inline style
+  attributes still require `style-src 'unsafe-inline'`. The browser extension
+  requests host access only for the API origin the user configures.
+- The maintenance endpoint is disabled unless `CRON_SECRET` is set, only
+  accepts the matching bearer token (constant-time comparison), and is the only
+  route that triggers background catch-up work.
 
 Please read [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 Do not open public issues for vulnerabilities.

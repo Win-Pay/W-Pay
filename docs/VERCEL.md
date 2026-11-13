@@ -54,10 +54,15 @@ artifact (git-ignored). The build command:
 4. A non-empty `public/` is produced so Vercel accepts the static output.
 
 `vercel.json` rewrites every path to the function, so Nest's global `/v1`
-prefix is preserved. The in-process webhook delivery worker is disabled
-(`WEBHOOK_WORKER=off`) and the indexer does not run on Vercel: serverless
-functions are request-scoped. Both need a long-running worker (Compose or
-Kubernetes per [DEPLOYMENT.md](DEPLOYMENT.md)) pointing at the same database.
+prefix is preserved. The in-process webhook delivery worker stays disabled
+(`WEBHOOK_WORKER=off`) and the indexer cannot run continuously, so a daily cron
+(`0 2 * * *`) calls `GET /v1/internal/maintenance`. That endpoint requires
+`Authorization: Bearer $CRON_SECRET` (Vercel sends it automatically when the
+variable exists; without it the route returns 404), drains due webhook
+deliveries and runs one indexer pass from the durable cursors. Hobby allows
+only daily crons, so work is caught up with up to a day of lag; attach a
+long-running worker (Compose or Kubernetes per [DEPLOYMENT.md](DEPLOYMENT.md))
+for real-time delivery and indexing.
 
 ## 1. Environment variables for a fresh deployment
 
@@ -70,6 +75,7 @@ values from `deployments/testnet.json`, and all three frontend origins:
 API_PUBLIC_URL=https://wpay-api-six.vercel.app
 WEB_PUBLIC_URL=https://wpay-web.vercel.app
 CORS_ORIGINS=https://wpay-web.vercel.app,https://wpay-merchant.vercel.app,https://wpay-admin.vercel.app
+CRON_SECRET=<random 32-byte hex>
 ```
 
 Cross-site refresh cookies default to `SameSite=None; Secure`. If the browser
