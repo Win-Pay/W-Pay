@@ -159,11 +159,10 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   (GitHub can delay scheduled runs under load). Run
   `gh workflow run maintenance.yml` for an immediate catch-up. Neither is a
   resident worker; real-time delivery still needs the long-running Compose or
-  Kubernetes processes. Both schedulers require `CRON_SECRET`. The GitHub
-  repository secret could not be created from this environment (the available
-  token cannot write Actions secrets), so add it in the repository settings
-  before relying on the 15-minute cadence; until then the workflow skips with
-  a warning and the daily Vercel cron still runs.
+  Kubernetes processes. Both schedulers require `CRON_SECRET`; the repository
+  secret is configured and a manual dispatch on 2026-11-13 returned
+  `ok:true` across all 16 contracts. GitHub may delay scheduled runs under
+  load.
 - `winpay.com` is attached to `wpay-web` in Vercel but its DNS is misconfigured
   and currently serves an unrelated Cloudflare/PHP site; use the
   `*.vercel.app` URLs until the records in
@@ -265,6 +264,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
 | Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 454 ms) with the bearer secret after the 2026-11-13 redeploy; 401 without/with a wrong secret; 404 when unset |
+| Hosted maintenance catch-up | GitHub Actions run 43460637331 (`maintenance.yml`, manual dispatch) | success; `ok:true`, 16 contracts scanned, 0 failures, 435 ms; `CRON_SECRET` masked in the log |
 | Hosted refund retry | `POST /v1/refunds/:id/approve-transaction` on the deployed API | 401 `UNAUTHORIZED` without a session (route present after the 2026-11-13 redeploy); linked/unlinked/unauthorized behaviour covered by the blockchain integration suite |
 | Hosted merchant build | served JavaScript chunk | chunk `app/page-*.js` contains `approve-transaction`, so the retry action ships; CSP nonce headers present |
 | Refund approval retry | blockchain integration suite | `POST /v1/refunds/:id/approve-transaction` returns the `approve` intent once the on-chain id is linked, `409 REFUND_NOT_LINKED` before that, and 409 for a wallet that is not the settlement wallet |
