@@ -4,7 +4,7 @@ import { loadConfig } from "./config";
 const base = {
   NODE_ENV: "production",
   DATABASE_URL: "postgresql://wpay:secret@db:5432/wpay",
-  JWT_SECRET: "0123456789abcdef0123456789abcdef",
+  JWT_SECRET: "test-secret-that-is-long-enough-for-validation",
   REDIS_URL: "rediss://redis.internal:6379",
   API_PUBLIC_URL: "https://api.wpay.test",
   WEB_PUBLIC_URL: "https://wpay.test",

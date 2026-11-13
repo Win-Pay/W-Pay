@@ -16,4 +16,6 @@ regexes = [
   '''wpay_local_only''',
   '''ci-only-secret-that-is-long-enough-for-validation''',
   '''test-secret-that-is-long-enough-for-validation''',
+  # Retired fake JWT fixture from config.test.ts (digits + abcdef, not a key).
+  '''0123456789abcdef0123456789abcdef''',
 ]
