@@ -32,10 +32,11 @@ Next.js app. To attach it, at the Cloudflare DNS zone for `winpay.com` either:
 Then click verify on the domain in the Vercel project. Until the record is
 correct, use the `*.vercel.app` URLs above; do not claim `winpay.com`.
 
-The `w-pay` team is on the Hobby plan, which only supports daily cron jobs, so
-a Vercel cron cannot substitute for the webhook worker or the indexer. Both
-need the long-running Compose/Kubernetes processes described in
-[DEPLOYMENT.md](DEPLOYMENT.md) §5c.
+The `w-pay` team is on the Hobby plan, which only supports daily cron jobs. A
+daily `GET /v1/internal/maintenance` cron therefore drains due webhook
+deliveries and runs one indexer pass per contract as a catch-up; it cannot
+provide real-time delivery. Both long-running Compose/Kubernetes processes
+described in [DEPLOYMENT.md](DEPLOYMENT.md) §5c are still required for that.
 
 ## 0. How the API runs on Vercel
 
