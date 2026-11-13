@@ -26,3 +26,7 @@ packages/contracts/target/
 # Playwright
 test-results/
 playwright-report/
+.env*
+
+# Generated serverless bundle
+/api/index.js

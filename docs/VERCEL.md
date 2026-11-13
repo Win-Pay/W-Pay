@@ -1,30 +1,60 @@
-# Vercel frontend configuration
+# Vercel deployment
 
-The three customer-facing projects are independent Next.js deployments in the
-same pnpm workspace:
+The API and the three customer-facing Next.js apps are deployed as separate
+Vercel projects in the `w-pay` team:
 
 | Vercel project | Local app | Production URL |
 | --- | --- | --- |
+| `wpay-api` | `apps/api` | https://wpay-api-six.vercel.app |
 | `wpay-web` | `apps/web` | https://wpay-web.vercel.app |
 | `wpay-merchant` | `apps/merchant-dashboard` | https://wpay-merchant.vercel.app |
 | `wpay-admin` | `apps/admin-dashboard` | https://wpay-admin.vercel.app |
 
-They are currently frontend-only deployments. No Vercel token or backend host
-was available in this workspace, so linking the projects to a live API was not
-performed. A bundle inspection on 2026-11-13 confirmed the hosted builds predate
-the fail-closed change and still fall back to `http://localhost:4000`; they must
-be rebuilt after `NEXT_PUBLIC_API_URL` is set. The configuration below is ready
-to apply.
+As of 2026-11-13 the API is live on Vercel with Neon Postgres and Upstash Redis
+marketplace integrations, all seven Prisma migrations applied, and the 16
+Testnet contract ids configured. `GET /v1/health` returns `database: "up"`,
+`soroban: "up"` and all 16 contracts; `/v1/health/ready` returns `ready: true`;
+`/v1/auth/csrf` sets a `Secure; HttpOnly; SameSite=None` cookie; a login attempt
+for an unknown account returns `401` (a real query against Neon, not a
+fallback). All three frontends were rebuilt with
+`NEXT_PUBLIC_API_URL=https://wpay-api-six.vercel.app` and their bundles were
+inspected to contain that origin.
 
-## 1. Deploy the backend first
+The project also lists a `winpay.com` custom domain, but DNS for that name
+resolves to an unrelated Cloudflare/PHP site. Do not claim that domain for the
+W-Pay app until its DNS is pointed at Vercel; use the `*.vercel.app` URLs above.
 
-The browser apps need a public HTTPS API origin. Follow
-[DEPLOYMENT.md](DEPLOYMENT.md) (Compose or Kubernetes). Production requires
-`API_PUBLIC_URL`/`WEB_PUBLIC_URL` to be real HTTPS origins and requires
-`REDIS_URL`; the API must allow all three frontend origins:
+## 0. How the API runs on Vercel
+
+The repository root has `vercel.json` and `api/index.js` is a generated
+artifact (git-ignored). The build command:
+
+1. `pnpm turbo build --filter=@wpay/api^...` compiles the workspace packages
+   and generates the Prisma client.
+2. `pnpm exec prisma generate` regenerates the client for the root install so
+   the traced function can resolve `@prisma/client`.
+3. `node scripts/build-serverless.mjs` bundles the Nest entrypoint with
+   esbuild and SWC. Bundling is required because Vercel's Node launcher cannot
+   `require()` ESM-only packages, which `@stellar/stellar-sdk`'s CJS build does
+   for `@noble/hashes`. SWC emits the decorator metadata Nest DI needs;
+   `@prisma/client` stays external so the engine binaries are traced.
+4. A non-empty `public/` is produced so Vercel accepts the static output.
+
+`vercel.json` rewrites every path to the function, so Nest's global `/v1`
+prefix is preserved. The in-process webhook delivery worker is disabled
+(`WEBHOOK_WORKER=off`) and the indexer does not run on Vercel: serverless
+functions are request-scoped. Both need a long-running worker (Compose or
+Kubernetes per [DEPLOYMENT.md](DEPLOYMENT.md)) pointing at the same database.
+
+## 1. Environment variables for a fresh deployment
+
+The browser apps need a public HTTPS API origin. The API requires real HTTPS
+`API_PUBLIC_URL`/`WEB_PUBLIC_URL`, `JWT_SECRET`, `DATABASE_URL` (and
+`DATABASE_URL_UNPOOLED` for migrations), `REDIS_URL`, the 16 `CONTRACT_*_ID`
+values from `deployments/testnet.json`, and all three frontend origins:
 
 ```env
-API_PUBLIC_URL=https://api.example.com
+API_PUBLIC_URL=https://wpay-api-six.vercel.app
 WEB_PUBLIC_URL=https://wpay-web.vercel.app
 CORS_ORIGINS=https://wpay-web.vercel.app,https://wpay-merchant.vercel.app,https://wpay-admin.vercel.app
 ```
@@ -34,13 +64,16 @@ blocks third-party cookies, serve the API on a first-party subdomain and set
 `COOKIE_DOMAIN` and `REFRESH_COOKIE_SAMESITE=lax` instead. Set `TRUST_PROXY` to
 the ingress hop count (default `1`).
 
-Verify before touching Vercel:
+Verify before touching the frontends:
 
 ```bash
-curl -s https://api.example.com/v1/health
+curl -s https://wpay-api-six.vercel.app/v1/health
 # {"status":"ok","database":"up","soroban":"up",...}
-curl -s -o /dev/null -w '%{http_code}\n' https://api.example.com/docs   # 200
 ```
+
+The serverless entrypoint boots with `swagger: false`, so `/docs` is not served
+on Vercel; use a Compose/Kubernetes deployment when you need the interactive
+OpenAPI UI.
 
 ## 2. Vercel project settings
 
@@ -65,7 +98,7 @@ Each app needs exactly one build-time public variable:
 
 | Variable | Value | Scope |
 | --- | --- | --- |
-| `NEXT_PUBLIC_API_URL` | `https://api.example.com` (your real API origin) | Production, Preview, Development |
+| `NEXT_PUBLIC_API_URL` | `https://wpay-api-six.vercel.app` | Production, Preview, Development |
 
 Set it per project:
 
@@ -73,7 +106,7 @@ Set it per project:
 cd apps/web
 vercel link                     # select the wpay-web project
 vercel env add NEXT_PUBLIC_API_URL production
-# paste https://api.example.com
+# paste https://wpay-api-six.vercel.app
 vercel --prod
 ```
 
@@ -103,7 +136,7 @@ error rather than calling localhost.
 2. Sign in on the merchant dashboard with an email account or Freighter wallet;
    the onboarding card appears for a wallet with no merchant.
 3. Sign in on the admin dashboard with an ADMIN/OPERATOR account.
-4. Confirm the browser network tab calls `https://api.example.com/v1/...`, not
+4. Confirm the browser network tab calls `https://wpay-api-six.vercel.app/v1/...`, not
    `localhost`.
 5. Pay a small Testnet invoice end to end. The UI must show the confirmed hash
    only after `/v1/transactions/submit` returns `SUCCESS` and the invoice

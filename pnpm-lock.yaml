@@ -176,15 +176,27 @@ importers:
       '@playwright/test':
         specifier: ^1.65.0
         version: 1.65.0
+      '@prisma/client':
+        specifier: 6.19.3
+        version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+      '@swc/core':
+        specifier: 1.16.22
+        version: 1.16.22
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.5
       '@vitest/coverage-v8':
         specifier: 2.1.9
         version: 2.1.9(supports-color@7.2.0)(vitest@2.1.9(@types/node@22.20.5)(supports-color@7.2.0))
+      esbuild:
+        specifier: 0.21.5
+        version: 0.21.5
       oxlint:
         specifier: ^0.15.5
         version: 0.15.15
+      prisma:
+        specifier: 6.19.3
+        version: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
       turbo:
         specifier: ^2.3.3
         version: 2.11.10
@@ -318,7 +330,7 @@ importers:
         version: 4.23.15
       unplugin-swc:
         specifier: ^1.6.0
-        version: 1.6.0(@swc/core@1.16.22)(esbuild@0.28.2)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15))
+        version: 1.6.0(@swc/core@1.16.22)(esbuild@0.21.5)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15))
 
   apps/extension:
     devDependencies:
@@ -5892,12 +5904,12 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  unplugin-swc@1.6.0(@swc/core@1.16.22)(esbuild@0.28.2)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)):
+  unplugin-swc@1.6.0(@swc/core@1.16.22)(esbuild@0.21.5)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)):
     dependencies:
       '@rollup/pluginutils': 5.5.1(rollup@4.68.2)
       '@swc/core': 1.16.22
       load-tsconfig: 0.2.5
-      unplugin: 3.7.0(esbuild@0.28.2)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15))
+      unplugin: 3.7.0(esbuild@0.21.5)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15))
     transitivePeerDependencies:
       - '@farmfe/core'
       - '@rsbuild/core'
@@ -5910,14 +5922,14 @@ snapshots:
       - vite
       - webpack
 
-  unplugin@3.7.0(esbuild@0.28.2)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)):
+  unplugin@3.7.0(esbuild@0.21.5)(rollup@4.68.2)(vite@6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)):
     dependencies:
       '@jridgewell/remapping': 2.3.5
       '@rolldown/pluginutils': 1.1.0
       picomatch: 4.0.7
       webpack-virtual-modules: 0.6.2
     optionalDependencies:
-      esbuild: 0.28.2
+      esbuild: 0.21.5
       rollup: 4.68.2
       vite: 6.4.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)
 

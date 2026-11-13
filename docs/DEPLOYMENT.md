@@ -174,6 +174,25 @@ The full procedure and exact values are in [VERCEL.md](VERCEL.md). Remember that
 `NEXT_PUBLIC_API_URL` is baked into the bundle, so changing it requires a new
 deployment.
 
+## 5c. Current Vercel deployment
+
+The API is deployed at https://wpay-api-six.vercel.app (project `wpay-api`) with
+Neon Postgres, Upstash Redis and all 16 Testnet contract ids. The three
+frontends are rebuilt against it. `GET /v1/health` and `/v1/health/ready` were
+verified against the live database and Soroban RPC on 2026-11-13.
+
+Serverless functions are request-scoped, so two long-running processes still
+need a Compose/Kubernetes worker using the same database:
+
+- the webhook delivery worker (the Vercel deployment sets `WEBHOOK_WORKER=off`);
+- the contract-event indexer (`apps/indexer`), which keeps the operational
+  projection in sync with on-chain state.
+
+Until those run, webhook deliveries accumulate as `PENDING` and indexed reads
+lag the chain. Health still reports `database: "up"` because it checks the
+connection, not worker liveness. See [VERCEL.md](VERCEL.md) for the build
+layout.
+
 ## 6. Rollback
 
 ```bash
