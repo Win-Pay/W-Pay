@@ -264,7 +264,9 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
-| Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 656 ms) with the bearer secret; 401 without/with a wrong secret; 404 when unset |
+| Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 454 ms) with the bearer secret after the 2026-11-13 redeploy; 401 without/with a wrong secret; 404 when unset |
+| Hosted refund retry | `POST /v1/refunds/:id/approve-transaction` on the deployed API | 401 `UNAUTHORIZED` without a session (route present after the 2026-11-13 redeploy); linked/unlinked/unauthorized behaviour covered by the blockchain integration suite |
+| Hosted merchant build | served JavaScript chunk | chunk `app/page-*.js` contains `approve-transaction`, so the retry action ships; CSP nonce headers present |
 | Refund approval retry | blockchain integration suite | `POST /v1/refunds/:id/approve-transaction` returns the `approve` intent once the on-chain id is linked, `409 REFUND_NOT_LINKED` before that, and 409 for a wallet that is not the settlement wallet |
 | Hosted error mapping | oversized (300 KB) body and malformed JSON against `/v1/auth/login` | `413 PAYLOAD_TOO_LARGE` and `400 BAD_REQUEST` JSON envelopes (not `500 INTERNAL`) |
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
