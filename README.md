@@ -115,7 +115,7 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers and rotating tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 145 tests including real Postgres integration |
+| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers and rotating tokens, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 153 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
 | Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented, but **not hosted** on Vercel |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
@@ -232,11 +232,13 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 209 passed, 2 skipped (api 145, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.4% statements, 71.12% branches, 92.48% functions; payments 90.03%, invoices 91.95%, operations 91.49%, auth 90.76%, platform 91.97% |
+| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 217 passed, 2 skipped (api 153, indexer 27, sdk 13, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.79% statements, 72.89% branches, 92.44% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.41%, platform 91.97% |
 | Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; disallowed origin 403; serverless `/docs` absent |
+| Hosted error mapping | oversized (300 KB) body and malformed JSON against `/v1/auth/login` | `413 PAYLOAD_TOO_LARGE` and `400 BAD_REQUEST` JSON envelopes (not `500 INTERNAL`) |
+| Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, no "Backend not configured", API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
 | GitHub Actions | CI + Security workflows | green on `407fd22` (CI 43424685282, Security 43424685181) |
@@ -259,7 +261,9 @@ behaviour is claimed.
 - Every privileged contract entry point requires authorization and an explicit
   role; see the security assumptions in each contract module.
 - API auth supports JWT, scoped API keys (`sha256`, prefix-indexed), and Stellar
-  wallet signature verification (challenge/response, raw or SEP-53).
+  wallet signature verification (challenge/response, raw or SEP-53). Access
+  tokens are signed and verified with `HS256` only, so a token carrying a
+  different `alg` header is rejected even if the secret would validate it.
 - Refresh tokens are opaque, stored as SHA-256 hashes, rotated on every use, and
   reused-token detection revokes the whole token family. They are delivered as
   `HttpOnly`, `Secure` cookies scoped to `/v1/auth`; refresh and logout require a
@@ -279,6 +283,9 @@ behaviour is claimed.
   accounts may override the platform default (250 bps).
 - Payment and invoice confirmation verifies the contract invocation arguments,
   memo and emitted event before changing database state.
+- Every failure is normalized into the documented `ApiErrorBody` envelope;
+  body-parser failures keep their status (`413 PAYLOAD_TOO_LARGE`,
+  `400 BAD_REQUEST`) instead of being reported as `500 INTERNAL`.
 - Webhooks are HMAC-SHA256 signed over `timestamp.body` with replay tolerance.
 - All three Next apps send CSP, `X-Frame-Options: DENY`, nosniff,
   referrer-policy and permissions-policy headers in production. The browser
