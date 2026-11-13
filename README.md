@@ -192,6 +192,11 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   approval transaction to sign (`409 REFUND_NOT_LINKED` before that).
 - Redis-backed rate limiting is implemented, but deployments without `REDIS_URL`
   fall back to per-process counters and multiply the quota per replica.
+- The daily production backup workflow fails closed because the `DATABASE_URL`
+  repository secret is not configured (run 43401586650), so no automatic
+  production backup has run yet. The scripted backup/restore drill was verified
+  locally (matching counts, encrypted round-trip); its workflow jobs are skipped
+  while the dump step fails.
 - No external security audit has occurred. The internal review in
   [docs/AUDIT.md](docs/AUDIT.md) is not an audit.
 
@@ -279,7 +284,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
-| GitHub Actions | CI + Security workflows | green on `c1c818e` (CI 43460918962, Security 43460918977); later commits are documentation-only |
+| GitHub Actions | CI + Security workflows | green on `aea4376` (CI 43464229296, Security 43464229343) |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |

@@ -21,6 +21,10 @@ measured.
 - `.github/workflows/backup.yml` takes a daily custom-format `pg_dump` of the
   production database (`DATABASE_URL` secret), records a row-count manifest and
   uploads both as a 30-day artifact.
+- **Current state (2026-11-13):** the scheduled run fails closed at the dump
+  step because the `DATABASE_URL` repository secret is not configured (run
+  43401586650), so no automatic production backup has been taken yet. Add the
+  secret to enable the daily dump and restore verification.
 - `scripts/db-backup.sh` supports client-side encryption for off-site copies:
   set `BACKUP_GPG_RECIPIENT` to a GPG public key and it writes `<dump>.gpg`,
   deletes the plaintext dump and prints the ciphertext SHA-256. The restore

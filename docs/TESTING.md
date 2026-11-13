@@ -33,12 +33,12 @@ same `cargo test` invocation.
 pnpm test
 ```
 
-209 tests pass and 2 are skipped, across six packages:
+230 tests pass and 2 are skipped, across six packages:
 
 | Package | Tests | Focus |
 | --- | --- | --- |
-| `@wpay/api` | 145 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions and webhooks |
-| `@wpay/indexer` | 27 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
+| `@wpay/api` | 164 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions and webhooks |
+| `@wpay/indexer` | 29 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
 | `@wpay/sdk` | 13 | HTTP client (credentials included, CSRF header, no refresh token in body), automatic refresh retry, call builders (including settlement windows), Soroban gateway, wallet signers |
 | `@wpay/shared` | 10 | Cursor encoding, webhook HMAC/verification, wallet messages, error mapping |
 | `@wpay/e2e` | 10 (+2 skipped) | Env-name mapping vs `.env.example`, fee/amount parity, call construction, wallet message, webhook tamper tests; live-API tests skip unless `WPAY_E2E_API_URL` is set |
