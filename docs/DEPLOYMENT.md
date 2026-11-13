@@ -197,8 +197,10 @@ immediate pass. `GET /v1/internal/maintenance` is disabled unless
 accepts `Authorization: Bearer $CRON_SECRET`; it drains up to 50 due webhook
 deliveries and runs one indexer pass over every configured contract from the
 stored cursors. Both operations are idempotent, so overlapping runs are safe.
-Lag is minutes rather than the day a Vercel-only cron would leave; real-time
-behaviour still needs the Compose/Kubernetes workers. Health still reports
+The repository secret is configured and a manual dispatch on 2026-11-13
+returned `ok:true` across all 16 contracts. Lag is minutes rather than the day
+a Vercel-only cron would leave; real-time behaviour still needs the
+Compose/Kubernetes workers. Health still reports
 `database: "up"` because it checks the connection, not worker liveness. Refund
 approval records the decision even when the on-chain refund id is not indexed
 yet; once the indexer links it, `POST /v1/refunds/:id/approve-transaction`

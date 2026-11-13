@@ -19,7 +19,9 @@ TypeScript SDK.
 > `GET /v1/internal/maintenance` with `CRON_SECRET`. The route drains due
 > webhook deliveries and runs one indexer pass from the durable cursor, so
 > missed work is applied rather than lost; `gh workflow run maintenance.yml`
-> triggers an immediate pass. Lag is therefore minutes rather than hours
+> triggers an immediate pass. The repository secret is configured, and a
+> manual dispatch on 2026-11-13 returned `ok:true` across all 16 contracts.
+> Lag is therefore minutes rather than hours
 > (GitHub can delay scheduled runs), but real-time behaviour still needs the
 > Compose/Kubernetes workers. There is no mainnet deployment and no external
 > audit. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and
@@ -43,10 +45,15 @@ Verified against the hosted stack on 2026-11-13:
   (no fallback storage); a sixth failed attempt for one address returns
   `429 ACCOUNT_LOCKED`.
 - `/v1/auth/csrf` sets a `Secure; HttpOnly; SameSite=None` cookie.
-- `GET /v1/internal/maintenance` with the cron bearer secret ran one indexer
-  pass over all 16 contracts (656 ms, no failures) and drained webhooks; the
-  same route returns `401` without the secret and is hidden (`404`) when
+- `GET /v1/internal/maintenance` with the cron bearer secret returned
+  `ok:true` over all 16 contracts with no failures (454 ms from `curl`,
+  435 ms from GitHub Actions run 43460637331) and drained webhooks; the same
+  route returns `401` without the secret and is hidden (`404`) when
   `CRON_SECRET` is unset.
+- The deployed API exposes `POST /v1/refunds/:id/approve-transaction`
+  (`401` without a session, not `404`), and the served merchant bundle contains
+  the matching retry action; the linked, unlinked and unauthorized branches are
+  covered by the blockchain integration suite.
 - Each frontend origin is echoed in `Access-Control-Allow-Origin`; a mutation
   from an unlisted origin returns `403 ORIGIN_FORBIDDEN`.
 - Headless Chromium loaded all three frontends, reported **zero CSP
@@ -272,7 +279,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
-| GitHub Actions | CI + Security workflows | green on `abb2428` (CI 43449551716, Security 43449552078) |
+| GitHub Actions | CI + Security workflows | green on `c1c818e` (CI 43460918962, Security 43460918977); later commits are documentation-only |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
