@@ -90,9 +90,11 @@ formal verification, external penetration test, or mainnet test was performed.
    `WalletNonce` table with expiry and single-use deletion, so any replica can
    verify them.
 6. **Refund execution linkage — fixed for indexed refunds.** The indexer links
-   `requested` refund events to the record; approval then builds the contract
-   call. If the refund is not linked, or already on chain, the API returns
-   `409` instead of pretending to submit.
+   `requested` refund events to the record. Approval records the decision and
+   returns `transaction: null` while the refund is unlinked, rather than
+   pretending to submit; `POST /v1/refunds/:id/approve-transaction` then
+   returns the contract call once linked (`409 REFUND_NOT_LINKED` before
+   that).
 7. **Session storage — mitigated.** Access and CSRF tokens live in memory only.
    The rotating refresh token is an `HttpOnly`, `Secure` cookie scoped to
    `/v1/auth` and is not readable by JavaScript; refresh and logout require a

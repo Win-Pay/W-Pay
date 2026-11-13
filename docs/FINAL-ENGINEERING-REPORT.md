@@ -1,6 +1,7 @@
 # Final engineering report
 
-Date: 2026-11-12, updated 2026-11-13 after the frontend/deployment integration pass
+Date: 2026-11-12, updated 2026-11-13 after the frontend/deployment integration
+pass and the residual-risk pass
 Repository: `/workspaces/W-Pay`
 Scope: gap closure against the engineering brief, run on the existing W-Pay
 monorepo without rebuilding or replacing working modules.
@@ -8,6 +9,15 @@ monorepo without rebuilding or replacing working modules.
 This report is an acceptance record, not an audit opinion and not evidence of a
 mainnet launch. Every result below was produced by a command or query in this
 workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
+
+> **Later state (2026-11-13, residual-risk pass).** The API, Postgres and Redis
+> are hosted on Vercel/Neon/Upstash; webhook delivery and indexing are caught
+> up by the Vercel daily cron plus a 15-minute GitHub Actions job
+> (`.github/workflows/maintenance.yml`); per-account login lockout and nonce
+> CSP are deployed; and refund approval can be signed after linkage via
+> `POST /v1/refunds/:id/approve-transaction`. Statements below that say the
+> backend is not hosted, or that an unlinked refund always returns `409`,
+> describe the earlier snapshot.
 
 ## 1. What changed
 
@@ -21,7 +31,7 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | Rate limiting | Redis-backed store used when `REDIS_URL` is set; per-process fallback logs a warning |
 | Wallet challenges | Single-use, expiring challenges persisted in the `WalletNonce` table instead of process memory |
 | Webhooks | SSRF guard at registration and delivery; signature and timestamp checks; retry, dead-letter (`FAILED`) and requeue covered by integration tests |
-| Refund linkage | Approval builds the contract call only after the indexer links the contract-assigned refund id; otherwise `409` |
+| Refund linkage | Approval records the decision without fabricating a transaction; once the indexer links the contract-assigned refund id, `POST /v1/refunds/:id/approve-transaction` returns the settlement-wallet approval transaction (`409 REFUND_NOT_LINKED` before the link exists) |
 | k6 | `loadtest/wpay.k6.js` with read and login scenarios, thresholds and a seed script; wired into CI |
 | Backups | `scripts/db-backup.sh` (optional GPG encryption), `scripts/db-restore-drill.sh` (decrypts `.gpg`, checks new tables, reports wall time), and `.github/workflows/backup.yml` (daily dump, manifest, restore verification, 30-day artifact) |
 | Images and supply chain | Docker bases pinned by digest, image build copies pnpm app-level `node_modules`, cosign keyless signing plus provenance/SBOM, digest-pinned CI services |
@@ -139,8 +149,9 @@ occurred.
   Dependency review is PR-only and image signing runs only in the deploy
   workflow, which was not executed. Cluster apply and alert delivery were not
   exercised.
-- The backend is not hosted; the Vercel frontends are static only and cannot
-  process payments until an API and database are deployed.
+- The backend was not hosted at the time of this snapshot; it is now live on
+  Vercel/Neon/Upstash (see the later-state note above), with webhook and
+  indexer catch-up on two schedulers rather than resident workers.
 
 ## 6. Remaining blockers
 
