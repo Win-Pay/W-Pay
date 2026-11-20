@@ -251,6 +251,28 @@ export class SorobanService {
     );
   }
 
+  reactivateMerchantIntent(operator: string, merchantId: bigint): Promise<TransactionIntent | null> {
+    return this.intent(
+      "merchantRegistry",
+      operator,
+      calls.reactivateMerchant(operator, merchantId),
+      "Reactivate merchant on chain",
+    );
+  }
+
+  updateMerchantSettlementIntent(
+    owner: string,
+    merchantId: bigint,
+    settlement: string,
+  ): Promise<TransactionIntent | null> {
+    return this.intent(
+      "merchantRegistry",
+      owner,
+      calls.updateMerchantSettlement(owner, merchantId, settlement),
+      "Update merchant settlement address",
+    );
+  }
+
   pauseAllIntent(admin: string): Promise<TransactionIntent | null> {
     return this.intent("emergencyPause", admin, calls.pauseAll(admin), "Pause all contracts");
   }

@@ -121,8 +121,9 @@ Open and documented in [AUDIT.md](AUDIT.md):
   domain is preferred. The extension
   requests only the configured API origin at lookup time. Production Next builds
   send CSP and standard security headers.
-- Real Freighter extension interaction not covered by CI; five Playwright
-  checkout/landing tests use a mocked provider and mocked API.
+- Real Freighter extension interaction not covered by CI; the browser suite has
+  nine Playwright tests (checkout, merchant dashboard, admin dashboard) using a
+  mocked provider and mocked API.
 - Container hardening not exercised beyond build and health smoke test.
 - `cargo audit` reports RUSTSEC-2026-0387 in transitive `crypto-bigint` 0.5.5
   (via `soroban-env-host` 29.0.1). The patched 0.7.x line is incompatible with
@@ -157,8 +158,9 @@ occurred.
 
 1. Independent smart-contract audit before any mainnet use.
 2. Multisig/hardware key ceremony and a timelock for admin powers.
-3. Hosted API, Postgres, Redis and indexer (with PITR and scheduled off-site
-   upload of encrypted backups); point the dashboards at them.
+3. Real-time worker host attached to the hosted database (the API, Postgres and
+   Redis are hosted; the indexer/webhook catch-up runs on schedulers); PITR and
+   scheduled off-site upload of encrypted backups.
 4. Real-extension Playwright tests covering Freighter rejection/approval.
 5. Automatic settlement worker and a full reconciliation report (operator
    batch API exists).
@@ -168,3 +170,59 @@ occurred.
 
 Until items 1-3 are complete, W-Pay is a verified Testnet prototype, not a
 production payment gateway.
+
+## 7. Update — 2026-11-20 review pass
+
+This pass changed code and documentation without changing contract sources,
+contract ids or deployed WASM. Results below were produced locally in this
+workspace; no CI run or deployment was performed for these uncommitted changes.
+
+Fixed:
+
+- Unscoped API keys could widen beyond their owner. Non-staff keys now require a
+  `merchantId`; access checks require a scoped key to match the merchant.
+- Cross-merchant IDOR in subscription listing, notifications list/mark-read and
+  treasury overview. Query filters now compose with ownership instead of
+  replacing it.
+- Merchant settlement changes bypassed the contract for registry-linked
+  merchants. `PATCH /merchants/:id` now rejects settlement changes for linked
+  merchants; `POST /merchants/:id/settlement-intent` builds the on-chain update.
+  Registry-linked status changes return intents and are no longer written
+  optimistically; reactivation uses `merchant_registry.reactivate`.
+- The SDK sent `{ query }` as the JSON body of `GET /v1/analytics/overview`,
+  which browsers reject ("Request with GET/HEAD method cannot have body") and
+  which broke dashboard analytics. The query now goes in the options argument,
+  with a regression test.
+- The mobile app silently pointed a non-local deployment at localhost. It now
+  requires `VITE_API_URL` and renders a configuration error otherwise.
+- Freighter signing did not check the wallet network. Checkout and the shared
+  signer now refuse to sign when the wallet reports a different network.
+- Indexer retries could regress terminal projections (refunds, invoices,
+  escrows, subscriptions, settlements, merchant status). Projections are now
+  guarded by source state and monotonic where cumulative.
+- Health reported static contract flags and had no Redis/indexer visibility.
+  `/v1/health` now probes Redis and reports checkpoint lag and unresolved
+  failures; `/v1/health/ready` includes Redis but never gates on indexer lag.
+
+Verified locally:
+
+- `pnpm typecheck`: 23/23 tasks.
+- `pnpm lint`: 15/15 tasks, 0 errors.
+- `pnpm build`: 15/15 tasks.
+- `pnpm test`: 239 passed, 2 skipped (api 167, indexer 30, sdk 14, hooks 4,
+  shared 10, e2e 10, database 4) against Postgres.
+- `pnpm test:browser`: 9 passed (checkout 5, merchant 2, admin 2), mocked
+  Freighter and API.
+- API coverage: 88.8% statements, 72.73% branches, 92.02% functions.
+- `pnpm audit --prod --audit-level=high`: no known production vulnerabilities
+  (unchanged from the previous run).
+
+Still open or BLOCKED:
+
+- WASM hash re-verification was not run in this environment (`cargo` is not
+  installed); contract sources are unchanged, but rebuild-and-compare is left to
+  CI.
+- No independent audit, no mainnet, no real-extension hosted payment, no live
+  batched settlement execution, no automatic settlement worker.
+- New documentation: [SETTLEMENT.md](SETTLEMENT.md) and
+  [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md).

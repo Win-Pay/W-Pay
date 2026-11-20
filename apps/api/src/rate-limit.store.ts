@@ -77,6 +77,7 @@ export interface RedisLike {
     script: string,
     options: { keys: string[]; arguments: string[] },
   ): Promise<unknown>;
+  ping?(): Promise<unknown>;
   del?(key: string): Promise<unknown>;
   connect?(): Promise<unknown>;
   quit?(): Promise<unknown>;
@@ -188,4 +189,35 @@ export function createRedisClient(url: string): RedisLike {
 export function redisUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const url = env.REDIS_URL?.trim();
   return url ? url : undefined;
+}
+
+/**
+ * One-shot connectivity probe for readiness checks. It opens its own short-
+ * lived connection so a failed probe cannot disturb the rate-limit store.
+ */
+export async function probeRedis(
+  url: string,
+  timeoutMs = 2_000,
+): Promise<"up" | "down"> {
+  const client = createRedisClient(url);
+  const withTimeout = <T>(promise: Promise<T>): Promise<T> => {
+    // Keep a late rejection after a timeout from becoming unhandled.
+    void promise.catch(() => undefined);
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error("redis probe timeout")), timeoutMs),
+      ),
+    ]);
+  };
+  try {
+    await withTimeout(Promise.resolve(client.connect?.()));
+    if (!client.ping) return "up";
+    const reply = await withTimeout(client.ping());
+    return String(reply).toUpperCase() === "PONG" ? "up" : "down";
+  } catch {
+    return "down";
+  } finally {
+    await client.quit?.().catch?.(() => undefined);
+  }
 }

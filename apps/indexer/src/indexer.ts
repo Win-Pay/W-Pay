@@ -433,6 +433,9 @@ export async function applyProjection(
       });
       if (!payment) return false;
       const refunded = BigInt(projection.refunded);
+      // Cumulative refunds only grow; a replayed older event must not lower
+      // the recorded total or un-refund a payment.
+      if (refunded < payment.refunded) return true;
       await tx.payment.update({
         where: { id: payment.id },
         data: {
@@ -473,15 +476,25 @@ export async function applyProjection(
 
     case "refund.approved":
     case "refund.rejected": {
+      const target = projection.type === "refund.approved" ? "APPROVED" : "REJECTED";
       const result = await tx.refund.updateMany({
-        where: { contractRefundId: BigInt(projection.contractRefundId) },
+        // Only a pending refund can be decided; a retried old decision must
+        // not overwrite the decision that actually landed on chain.
+        where: { contractRefundId: BigInt(projection.contractRefundId), status: "PENDING" },
         data: {
-          status: projection.type === "refund.approved" ? "APPROVED" : "REJECTED",
+          status: target,
           txHash: projection.txHash,
           decidedAt: new Date(),
         },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      const existing = await tx.refund.count({
+        where: {
+          contractRefundId: BigInt(projection.contractRefundId),
+          status: { in: ["APPROVED", "REJECTED"] },
+        },
+      });
+      return existing > 0;
     }
 
     case "escrow.created": {
@@ -512,11 +525,26 @@ export async function applyProjection(
     }
 
     case "escrow.status": {
+      const contractEscrowId = BigInt(projection.contractEscrowId);
+      // A dispute can resolve, but a terminal payout can never move again.
+      const allowedFrom = projection.status === "DISPUTED"
+        ? (["CREATED", "FUNDED"] as const)
+        : (["FUNDED", "DISPUTED"] as const);
       const result = await tx.escrow.updateMany({
-        where: { contractEscrowId: BigInt(projection.contractEscrowId) },
+        where: { contractEscrowId, status: { in: [...allowedFrom] } },
         data: { status: projection.status, txHash: projection.txHash },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      // An old failure for a transition that already advanced must resolve,
+      // not fail forever.
+      return (
+        (await tx.escrow.count({
+          where: {
+            contractEscrowId,
+            status: { in: ["RELEASED", "REFUNDED", "RESOLVED"] },
+          },
+        })) > 0
+      );
     }
 
     case "invoice.created": {
@@ -575,11 +603,20 @@ export async function applyProjection(
     }
 
     case "invoice.status": {
+      const contractInvoiceId = BigInt(projection.contractInvoiceId);
       const result = await tx.invoice.updateMany({
-        where: { contractInvoiceId: BigInt(projection.contractInvoiceId) },
+        // Cancellation/expiry cannot undo a settled invoice.
+        where: { contractInvoiceId, status: "OPEN" },
         data: { status: projection.status, txHash: projection.txHash },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      const settled = await tx.invoice.count({
+        where: {
+          contractInvoiceId,
+          status: { in: ["PAID", "CANCELLED", "EXPIRED"] },
+        },
+      });
+      return settled > 0;
     }
 
     case "plan.created": {
@@ -624,6 +661,9 @@ export async function applyProjection(
         where: { planId_subscriber: { planId: plan.id, subscriber: projection.subscriber } },
       });
       if (!subscription) return false;
+      // Already linked, perhaps cancelled since: replaying the creation must
+      // not reactivate it.
+      if (subscription.contractSubId !== null) return true;
       await tx.subscription.update({
         where: { id: subscription.id },
         data: {
@@ -642,6 +682,9 @@ export async function applyProjection(
         where: { contractSubId },
       });
       if (!subscription) return false;
+      // A cancelled or lapsed subscription is no longer charged locally; the
+      // stale charge must not extend a dead subscription.
+      if (subscription.status !== "ACTIVE") return true;
       const plan = await tx.subscriptionPlan.findUnique({
         where: { id: subscription.planId },
       });
@@ -705,16 +748,24 @@ export async function applyProjection(
     }
 
     case "settlement.closed": {
+      const windowIdOnChain = BigInt(projection.windowIdOnChain);
       const result = await tx.settlementWindow.updateMany({
-        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        where: { windowIdOnChain, status: "OPEN" },
         data: { status: "CLOSED", total: BigInt(projection.total), txHash: projection.txHash },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      return (
+        (await tx.settlementWindow.count({
+          where: { windowIdOnChain, status: { in: ["CLOSED", "EXECUTED", "CANCELLED"] } },
+        })) > 0
+      );
     }
 
     case "settlement.executed": {
+      const windowIdOnChain = BigInt(projection.windowIdOnChain);
+      // Execution is terminal and only valid directly after closing.
       const result = await tx.settlementWindow.updateMany({
-        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        where: { windowIdOnChain, status: "CLOSED" },
         data: {
           status: "EXECUTED",
           total: BigInt(projection.total),
@@ -722,15 +773,27 @@ export async function applyProjection(
           txHash: projection.txHash,
         },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      return (
+        (await tx.settlementWindow.count({
+          where: { windowIdOnChain, status: "EXECUTED" },
+        })) > 0
+      );
     }
 
     case "settlement.cancelled": {
+      const windowIdOnChain = BigInt(projection.windowIdOnChain);
+      // Cancellation is legal for open and closed windows, never after payout.
       const result = await tx.settlementWindow.updateMany({
-        where: { windowIdOnChain: BigInt(projection.windowIdOnChain) },
+        where: { windowIdOnChain, status: { in: ["OPEN", "CLOSED"] } },
         data: { status: "CANCELLED", txHash: projection.txHash },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      return (
+        (await tx.settlementWindow.count({
+          where: { windowIdOnChain, status: { in: ["CANCELLED", "EXECUTED"] } },
+        })) > 0
+      );
     }
 
     case "merchant.registered": {
@@ -742,11 +805,25 @@ export async function applyProjection(
     }
 
     case "merchant.status": {
+      const registryId = BigInt(projection.registryId);
+      // Closed is terminal. Approval/reactivation may only leave the states the
+      // registry contract permits, so a replayed event cannot regress a close.
+      const allowedFrom =
+        projection.status === "CLOSED"
+          ? (["PENDING", "ACTIVE", "SUSPENDED"] as const)
+          : projection.status === "SUSPENDED"
+            ? (["ACTIVE"] as const)
+            : (["PENDING", "SUSPENDED"] as const);
       const result = await tx.merchant.updateMany({
-        where: { registryId: BigInt(projection.registryId) },
+        where: { registryId, status: { in: [...allowedFrom] } },
         data: { status: projection.status },
       });
-      return result.count > 0;
+      if (result.count > 0) return true;
+      return (
+        (await tx.merchant.count({
+          where: { registryId, status: projection.status },
+        })) > 0
+      );
     }
 
     case "merchant.settlement": {

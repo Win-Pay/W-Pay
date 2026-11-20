@@ -2,40 +2,32 @@
 
 ## Current status
 
-**All 16 contracts are deployed to Stellar Testnet and an end-to-end payment
-has settled on-chain.** The API, Postgres, Redis and indexer are not hosted;
-they run locally/compose only. The three frontends are static Vercel hosting and
-read `NEXT_PUBLIC_API_URL` at build time, so they show a configuration error
-until that variable points at a deployed backend.
+**All 16 contracts are deployed to Stellar Testnet, the API/Postgres/Redis are
+hosted on Vercel/Neon/Upstash, and an end-to-end payment has settled on chain.**
+The frontends are deployed against the hosted API. There is no mainnet
+deployment and no external audit. Hosting details and the 2026-11-13 verification
+record are in [README.md](README.md#live-deployments) and
+[docs/VERCEL.md](docs/VERCEL.md).
 
 | Component | Status | Evidence |
 | --- | --- | --- |
 | Contracts | **deployed on Testnet** | 16/16 ids and transactions below; deployed 2026-11-12; instances and create txs re-checked over RPC 2026-11-13 |
 | End-to-end payment | **verified on Testnet** | tx `db354f7f…e47d`, ledger 5698164, event + balances checked |
 | API payment confirmation | **verified locally against Testnet** | payment `SETTLED`, `contractPaymentId=1`, fee/net `250000`/`9750000`; see the invoice-memo qualification below |
-| API | not hosted | runs locally against Postgres/Redis; no public URL |
-| Indexer | not hosted | runs locally; no public URL |
-| Checkout UI | deployed (frontend only) | <https://wpay-web.vercel.app> — HTTP 200 verified 2026-11-12 |
-| Merchant dashboard | deployed (frontend only) | <https://wpay-merchant.vercel.app> — HTTP 200 verified 2026-11-12 |
-| Admin dashboard | deployed (frontend only) | <https://wpay-admin.vercel.app> — HTTP 200 verified 2026-11-12 |
+| API | **hosted** | <https://wpay-api-six.vercel.app> — `/v1/health` and `/v1/health/ready` 200; Neon and Soroban up; 16/16 contract flags |
+| Postgres | **hosted** | Neon `neon-citrine-compass`, 7 migrations applied |
+| Redis | **hosted** | Upstash `upstash-kv-indigo-marble`, used for rate limits and login lockout |
+| Indexer | **scheduled catch-up** | daily Vercel cron plus 15-minute GitHub Actions run; not a resident worker (see README) |
+| Checkout UI | **hosted against the API** | <https://wpay-web.vercel.app> |
+| Merchant dashboard | **hosted against the API** | <https://wpay-merchant.vercel.app> |
+| Admin dashboard | **hosted against the API** | <https://wpay-admin.vercel.app> |
 
-The frontend bundles contain `NEXT_PUBLIC_API_URL` only when it is set at Vercel
-build time. The currently hosted bundles were built on 2026-11-12 before the
-fail-closed change and still contain the old `http://localhost:4000` fallback;
-they cannot reach any backend. Current source requires `NEXT_PUBLIC_API_URL` and
-renders a visible configuration error instead. Redeploy all three projects after
-setting the variable. Backend deployment and the exact Vercel values are
-documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and
-[docs/VERCEL.md](docs/VERCEL.md). The checkout app also serves a product landing
-page at `/landing`; `/` remains the invoice checkout.
-
-### Frontend deployment record
-
-| Host | Project | URL | Deployed | Verified |
-| --- | --- | --- | --- | --- |
-| Vercel (team `w-pay`) | `wpay-web` | https://wpay-web.vercel.app | 2026-11-12 | `GET /` → 200, `<title>W-Pay Checkout</title>` |
-| Vercel (team `w-pay`) | `wpay-merchant` | https://wpay-merchant.vercel.app | 2026-11-12 | `GET /` → 200, `<title>W-Pay Merchant</title>` |
-| Vercel (team `w-pay`) | `wpay-admin` | https://wpay-admin.vercel.app | 2026-11-12 | `GET /` → 200, `<title>W-Pay Admin</title>` |
+The hosted record on 2026-11-13 covers health/readiness, CSRF cookies, CORS,
+DB-backed login rejection and lockout, maintenance catch-up, the refund retry
+route, error mapping, forged-token rejection and headless browser loads of all
+three frontends with zero CSP violations. Those checks do not include a hosted
+payment signed by a real Freighter extension. The `winpay.com` domain remains
+misconfigured (see README); use the `*.vercel.app` origins.
 
 ## Stellar Testnet contract deployment (verified)
 

@@ -1,14 +1,13 @@
 import { useState } from "react";
 import type { InvoiceRecord } from "@wpay/types";
 import { Alert, Badge, Brand, Button, Card, Field, Input, statusTone } from "@wpay/ui";
-import { formatAmount } from "@wpay/hooks";
+import { formatAmount, resolveApiBaseUrl } from "@wpay/hooks";
 import { WPayApi } from "@wpay/sdk";
 
-const apiUrl =
-  (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_API_URL ??
-  "http://localhost:4000";
+const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+const resolved = resolveApiBaseUrl(viteEnv?.VITE_API_URL, "VITE_API_URL");
 
-const api = new WPayApi({ baseUrl: apiUrl });
+const api = new WPayApi({ baseUrl: resolved.url });
 
 export function App(): React.ReactElement {
   const [number, setNumber] = useState("");
@@ -19,6 +18,10 @@ export function App(): React.ReactElement {
 
   async function lookup(event: React.FormEvent): Promise<void> {
     event.preventDefault();
+    if (resolved.error) {
+      setError(resolved.error);
+      return;
+    }
     setBusy(true);
     setError(null);
     setInvoice(null);
@@ -49,6 +52,12 @@ export function App(): React.ReactElement {
         <Brand />
         <Badge tone="neutral">Mobile</Badge>
       </div>
+
+      {resolved.error ? (
+        <div style={{ marginBottom: 14 }}>
+          <Alert tone="error">{resolved.error}</Alert>
+        </div>
+      ) : null}
 
       <Card title="Pay an invoice" description="Enter the invoice number from your receipt.">
         <form onSubmit={lookup} className="wp-stack">
@@ -91,7 +100,10 @@ export function App(): React.ReactElement {
         </div>
       ) : null}
 
-      <p className="mobile-note">W-Pay · Stellar and Soroban settlement · API {apiUrl}</p>
+      <p className="mobile-note">
+        W-Pay · Stellar and Soroban settlement
+        {resolved.error ? " · API not configured" : ""}
+      </p>
     </main>
   );
 }

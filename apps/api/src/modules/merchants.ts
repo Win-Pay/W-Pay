@@ -16,9 +16,12 @@ import { ApiTags } from "@nestjs/swagger";
 import {
   CreateMerchantSchema,
   UpdateMerchantSchema,
+  UpdateMerchantSettlementSchema,
   type CreateMerchantInput,
   type MerchantRecord,
+  type TransactionIntent,
   type UpdateMerchantInput,
+  type UpdateMerchantSettlementInput,
   type UserRole,
 } from "@wpay/types";
 import { clampPageSize } from "@wpay/config";
@@ -131,6 +134,11 @@ export class MerchantsService {
     const row = await this.prisma.merchant.findUnique({ where: { id } });
     if (!row) throw new NotFoundException("merchant not found");
     requireMerchantAccess(user, row);
+    if (input.settlementAddress && row.registryId !== null) {
+      throw new ConflictException(
+        "settlement address is controlled on chain; use the settlement intent route",
+      );
+    }
     const updated = await this.prisma.merchant.update({
       where: { id },
       data: {
@@ -148,21 +156,63 @@ export class MerchantsService {
     user: AuthUser,
     id: string,
     status: "ACTIVE" | "SUSPENDED",
-  ): Promise<{ merchant: MerchantRecord; transaction: unknown }> {
+  ): Promise<{ merchant: MerchantRecord; transaction: TransactionIntent | null }> {
     const row = await this.prisma.merchant.findUnique({ where: { id } });
     if (!row) throw new NotFoundException("merchant not found");
     if (status === "ACTIVE" && row.status !== "PENDING" && row.status !== "SUSPENDED") {
       throw new ConflictException(`cannot activate a ${row.status.toLowerCase()} merchant`);
     }
+    if (status === "SUSPENDED" && row.status !== "ACTIVE") {
+      throw new ConflictException(`cannot suspend a ${row.status.toLowerCase()} merchant`);
+    }
+
+    if (row.registryId !== null) {
+      // The registry is the source of truth: leave the projection untouched
+      // until the indexer observes the signed approval/suspension event.
+      const caller = user.stellarAddress ?? row.ownerAddress;
+      const transaction =
+        status === "SUSPENDED"
+          ? await this.soroban.suspendMerchantIntent(caller, row.registryId)
+          : row.status === "SUSPENDED"
+            ? await this.soroban.reactivateMerchantIntent(caller, row.registryId)
+            : await this.soroban.approveMerchantIntent(caller, row.registryId);
+      if (!transaction) {
+        throw new ConflictException("merchant registry is not configured for this deployment");
+      }
+      await this.audit.record(user, `merchant.${status.toLowerCase()}_requested`, "Merchant", id, {
+        registryId: row.registryId.toString(),
+      });
+      return { merchant: toMerchantRecord(row), transaction };
+    }
+
     const updated = await this.prisma.merchant.update({ where: { id }, data: { status } });
     await this.audit.record(user, `merchant.${status.toLowerCase()}`, "Merchant", id, {});
-    const transaction =
-      row.registryId && status === "ACTIVE"
-        ? await this.soroban.approveMerchantIntent(user.stellarAddress ?? row.ownerAddress, row.registryId)
-        : row.registryId && status === "SUSPENDED"
-          ? await this.soroban.suspendMerchantIntent(user.stellarAddress ?? row.ownerAddress, row.registryId)
-          : null;
-    return { merchant: toMerchantRecord(updated), transaction };
+    return { merchant: toMerchantRecord(updated), transaction: null };
+  }
+
+  async settlementIntent(
+    user: AuthUser,
+    id: string,
+    input: UpdateMerchantSettlementInput,
+  ): Promise<TransactionIntent> {
+    const row = await this.prisma.merchant.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("merchant not found");
+    requireMerchantAccess(user, row);
+    if (row.registryId === null) {
+      throw new ConflictException("merchant is not registered on chain yet");
+    }
+    const transaction = await this.soroban.updateMerchantSettlementIntent(
+      row.ownerAddress,
+      row.registryId,
+      input.settlementAddress,
+    );
+    if (!transaction) {
+      throw new ConflictException("merchant registry is not configured for this deployment");
+    }
+    await this.audit.record(user, "merchant.settlement_requested", "Merchant", id, {
+      settlementAddress: input.settlementAddress,
+    });
+    return transaction;
   }
 }
 
@@ -215,6 +265,15 @@ export class MerchantsController {
   @Post(":id/suspend")
   suspend(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.merchants.setStatus(user, id, "SUSPENDED");
+  }
+
+  @Post(":id/settlement-intent")
+  settlementIntent(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodPipe(UpdateMerchantSettlementSchema)) input: UpdateMerchantSettlementInput,
+  ): Promise<TransactionIntent> {
+    return this.merchants.settlementIntent(user, id, input);
   }
 }
 

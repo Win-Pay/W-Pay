@@ -120,6 +120,13 @@ export interface HealthStatus {
   version: string;
   database: "up" | "down";
   soroban: "up" | "down" | "not_configured";
+  redis?: "up" | "down" | "not_configured";
+  indexer?: {
+    status: "up" | "stale" | "not_started";
+    lagSeconds: number | null;
+    checkpoints: number;
+    unresolvedFailures: number;
+  };
   contracts: Record<string, boolean>;
 }
 
@@ -195,6 +202,10 @@ export class WPayApi {
         "POST",
         `/v1/merchants/${id}/suspend`,
       ),
+    settlementIntent: (id: string, settlementAddress: string) =>
+      this.http.request<TransactionIntent>("POST", `/v1/merchants/${id}/settlement-intent`, {
+        settlementAddress,
+      }),
   };
 
   payments = {
@@ -321,7 +332,7 @@ export class WPayApi {
 
   analytics = {
     overview: (merchantId: string) =>
-      this.http.request<AnalyticsOverview>("GET", "/v1/analytics/overview", {
+      this.http.request<AnalyticsOverview>("GET", "/v1/analytics/overview", undefined, {
         query: { merchantId },
       }),
   };

@@ -126,6 +126,15 @@ describe("WPayApi", () => {
     expect(calls).toBe(1);
   });
 
+  it("keeps GET query parameters out of the request body", async () => {
+    const { api, fetchImpl } = client(() => jsonResponse({ merchantId: "m_1" }));
+    await api.analytics.overview("m_1");
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(init?.method).toBe("GET");
+    expect(init?.body).toBeUndefined();
+    expect(String(url)).toBe("https://api.wpay.test/v1/analytics/overview?merchantId=m_1");
+  });
+
   it("exposes health", async () => {
     const { api } = client(() =>
       jsonResponse({

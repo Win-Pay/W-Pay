@@ -19,7 +19,7 @@ Status legend: done / partial / not started. Nothing here is a promise of a date
 - [x] k6 load test wired into CI with latency and error thresholds
 - [x] Automated PostgreSQL backup workflow, executable restore drill, encrypted off-site copy support and measured local restore
 - [x] Playwright checkout tests with a mocked wallet and mocked API (real-extension E2E remains open)
-- [ ] Playwright browser E2E for merchant/admin dashboards
+- [x] Playwright browser E2E for merchant/admin dashboards (mocked API + wallet)
 
 ## Next — before mainnet
 

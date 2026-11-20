@@ -85,9 +85,10 @@ contract configuration behind a success.
 | POST | `/merchants` | Register a merchant |
 | GET | `/merchants` | List (operator/admin sees all, merchant sees own) |
 | GET | `/merchants/:id` | Profile |
-| PATCH | `/merchants/:id` | Update name, settlement address, webhook URL |
+| PATCH | `/merchants/:id` | Update name, webhook URL; settlement only while unlinked |
+| POST | `/merchants/:id/settlement-intent` | Build the on-chain settlement-address update for a registry-linked merchant |
 | POST | `/merchants/:id/approve` | Operator approval (on-chain tx when configured) |
-| POST | `/merchants/:id/suspend` | Suspend (on-chain tx when configured) |
+| POST | `/merchants/:id/suspend` | Suspend/reactivate (on-chain tx when configured) |
 
 A merchant creating its own record (`POST /merchants`) must pass an
 `ownerAddress` equal to the `G...` wallet authenticated on the account; this
@@ -98,6 +99,15 @@ made by an `ADMIN`/`OPERATOR` principal may set `feeBps` at creation. Approve
 and suspend are operator-only and build an on-chain transaction when the
 merchant has a `registryId`; without contract configuration they update the
 database only and return `transaction: null`.
+
+Once a merchant has a `registryId`, its settlement address is contract state:
+`PATCH /merchants/:id` rejects a settlement change with `409`, and
+`POST /merchants/:id/settlement-intent` returns the
+`merchant_registry.update_settlement` transaction for the owner to sign. A
+registry-linked merchant's status is not written optimistically; approval,
+suspension and reactivation return the intent and the indexer applies the new
+status when the contract event arrives. Reactivation uses
+`merchant_registry.reactivate`, not `approve`.
 
 ### Payments
 | Method | Path | Description |
@@ -115,14 +125,17 @@ database only and return `transaction: null`.
 | GET | `/invoices` | List |
 | GET | `/invoices/public/:number` | Public invoice view (no auth) |
 | POST | `/invoices/public/:number/intent` | Public payment intent |
+| POST | `/invoices/public/:number/confirm` | Confirm a submitted tx hash against the chain |
+| GET | `/invoices/:id` | Merchant view |
+| POST | `/invoices/:id/cancel` | Cancel an open invoice |
 
 The public invoice view intentionally omits customer email, payment ids and
 merchant-internal fields, but includes what checkout needs to disclose the
 payment: `merchantName`, `merchantWebsite`, `merchantDescription`, `feeBps`,
 `fee` and `net` (merchant proceeds). `fee` is deducted from the invoice amount;
-the payer signs a transfer of the full `amount`.
-| GET | `/invoices/:id` | Merchant view |
-| POST | `/invoices/:id/cancel` | Cancel an open invoice |
+the payer signs a transfer of the full `amount`. Confirmation verifies the
+envelope, memo, contract arguments and emitted event before the invoice becomes
+`PAID`; a client-supplied hash alone is never sufficient.
 
 ### Escrows
 | Method | Path | Description |
@@ -141,6 +154,7 @@ the payer signs a transfer of the full `amount`.
 | POST | `/refunds` | Request a refund |
 | GET | `/refunds` | List |
 | POST | `/refunds/:id/approve` | Merchant decision (settlement-address authority) |
+| POST | `/refunds/:id/approve-transaction` | Build the contract approval tx once the on-chain refund id is linked; `409 REFUND_NOT_LINKED` before that |
 | POST | `/refunds/:id/reject` | Merchant rejection |
 
 ### Subscriptions
@@ -155,16 +169,16 @@ the payer signs a transfer of the full `amount`.
 ### Platform
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| GET | `/health` | public | Liveness + component status |
-| GET | `/health/ready` | public | Readiness: Postgres + Soroban RPC (`503` when either is down) |
+| GET | `/health` | public | Liveness plus database, Soroban, Redis, indexer and contract flags |
+| GET | `/health/ready` | public | Readiness: Postgres + Soroban RPC + Redis (`503` when a required dependency is down) |
 | GET | `/health/metrics` | public | Prometheus exposition |
 | GET | `/analytics/overview` | merchant | Volume, counts, fee totals |
-| GET | `/settlements` | merchant | Settlement history |
-| POST | `/settlements/batches` | merchant | Create a 1–20 entry settlement window |
-| GET | `/settlements/:id` | merchant | Batch, entries and linked contract id |
-| POST | `/settlements/:id/link` | merchant | Record the on-chain window id |
-| POST | `/settlements/:id/intents` | merchant | Open/add-entry/close XDR intents |
-| POST | `/settlements/:id/execute-intent` | merchant | Execute intent when `CLOSED` |
+| GET | `/settlements` | merchant/operator | Settlement history (merchant scope applied) |
+| POST | `/settlements/batches` | operator | Create a 1–20 entry settlement window |
+| GET | `/settlements/:id` | operator | Batch, entries and linked contract id |
+| POST | `/settlements/:id/link` | operator | Record the on-chain window id |
+| POST | `/settlements/:id/intents` | operator | Open/add-entry/close XDR intents |
+| POST | `/settlements/:id/execute-intent` | operator | Execute intent when `CLOSED` |
 | POST | `/settlements/:id/cancel-intent` | admin | Cancel a non-executed window |
 | GET | `/treasury/overview` | admin | Treasury balances and fees |
 | POST | `/treasury/withdraw-intent` | admin | Unsigned withdraw XDR |
@@ -179,6 +193,17 @@ the payer signs a transfer of the full `amount`.
 | POST | `/admin/indexer/failures/:id/resolve` | admin | Mark a reviewed failure resolved (audited) |
 | GET | `/admin/merchants` | admin | All merchants |
 | POST | `/transactions/submit` | public | Submit a signed XDR (signed by the caller) |
+
+`/health` reports `database`, `soroban` (`up`/`down`/`not_configured`), `redis`
+(`up`/`down`/`not_configured`), `indexer` and a `contracts` map. The indexer
+block contains `status` (`up`/`stale`/`not_started`), `lagSeconds`,
+`checkpoints` and `unresolvedFailures`; `stale` means no checkpoint advanced for
+30 minutes. Indexer lag is visibility only and never gates readiness, because
+the API can serve reads while the projection catches up. Readiness fails on
+Postgres, Soroban RPC or Redis being down.
+
+Settlement batch lifecycle, intent ordering, funding and reconciliation are
+documented in [SETTLEMENT.md](SETTLEMENT.md).
 
 ### Webhooks
 | Method | Path | Description |

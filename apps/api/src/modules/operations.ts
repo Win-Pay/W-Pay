@@ -663,16 +663,22 @@ export class SubscriptionsService {
   ): Promise<{ items: SubscriptionRecord[]; nextCursor: string | null }> {
     const limit = clampPageSize(query.limit);
     const staff = user.role === "ADMIN" || user.role === "OPERATOR";
+    // The merchant filter must never replace the caller's ownership scope;
+    // otherwise any authenticated user could page another merchant's list by
+    // passing its id.
+    const merchantScope = staff
+      ? query.merchantId
+        ? { plan: { merchantId: query.merchantId } }
+        : {}
+      : user.viaApiKey && user.scopedMerchantId
+        ? { plan: { merchantId: user.scopedMerchantId } }
+        : query.merchantId
+          ? { plan: { merchantId: query.merchantId, merchant: { ownerUserId: user.id } } }
+          : { plan: { merchant: { ownerUserId: user.id } } };
     const rows = await this.prisma.subscription.findMany({
       where: {
         ...(query.subscriber ? { subscriber: query.subscriber } : {}),
-        ...(query.merchantId
-          ? { plan: { merchantId: query.merchantId } }
-          : staff
-            ? {}
-            : user.viaApiKey
-              ? { plan: { merchantId: user.scopedMerchantId ?? undefined } }
-              : { plan: { merchant: { ownerUserId: user.id } } }),
+        ...merchantScope,
       },
       orderBy: { createdAt: "desc" },
       take: limit + 1,

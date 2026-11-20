@@ -270,8 +270,8 @@ export function canAccessMerchant(
   merchant: MerchantScope,
 ): boolean {
   if (user.role === "ADMIN" || user.role === "OPERATOR") return true;
-  if (user.viaApiKey) {
-    return user.scopedMerchantId === null || user.scopedMerchantId === merchant.id;
+  if (user.viaApiKey && user.scopedMerchantId !== null) {
+    return user.scopedMerchantId === merchant.id;
   }
   return merchant.ownerUserId === user.id;
 }

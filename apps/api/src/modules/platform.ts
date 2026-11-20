@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Injectable,
   Module,
@@ -23,6 +24,7 @@ import { Prisma, serializeBigInts } from "@wpay/database";
 import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
+import { probeRedis } from "../rate-limit.store";
 import { APP_CONFIG, type AppConfig } from "../config";
 import {
   CurrentUser,
@@ -61,15 +63,22 @@ export class HealthController {
     }
     const contracts: Record<string, boolean> = {};
     for (const name of Object.keys(this.config.contracts)) {
-      contracts[name] = true;
+      contracts[name] = this.soroban.has(name as Parameters<SorobanService["has"]>[0]);
     }
-    const soroban = await this.soroban.rpcHealth();
+    const [soroban, redis, indexer] = await Promise.all([
+      this.soroban.rpcHealth(),
+      this.redisHealth(),
+      this.indexerHealth(),
+    ]);
     return {
-      status: database === "up" && soroban !== "down" ? "ok" : "degraded",
+      status:
+        database === "up" && soroban !== "down" && redis !== "down" ? "ok" : "degraded",
       uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
       version: "0.1.0",
       database,
       soroban,
+      redis,
+      indexer,
       contracts,
     };
   }
@@ -83,10 +92,57 @@ export class HealthController {
     } catch {
       database = false;
     }
-    const soroban = await this.soroban.rpcHealth();
-    const ready = database && soroban !== "down";
+    const [soroban, redis, indexer] = await Promise.all([
+      this.soroban.rpcHealth(),
+      this.redisHealth(),
+      this.indexerHealth(),
+    ]);
+    const ready = database && soroban !== "down" && redis !== "down";
     response.status(ready ? 200 : 503);
-    return { ready, database: database ? "up" : "down", soroban };
+    return {
+      ready,
+      database: database ? "up" : "down",
+      soroban,
+      redis,
+      indexer,
+    };
+  }
+
+  private async redisHealth(): Promise<"up" | "down" | "not_configured"> {
+    const url = this.config.env.REDIS_URL;
+    if (!url) return "not_configured";
+    return probeRedis(url);
+  }
+
+  /**
+   * Visibility only: a healthy API can serve traffic while the indexer catches
+   * up, so indexer lag never fails readiness. Thirty minutes is well past the
+   * normal poll interval and flags a stalled worker.
+   */
+  private async indexerHealth(): Promise<{
+    status: "up" | "stale" | "not_started";
+    lagSeconds: number | null;
+    checkpoints: number;
+    unresolvedFailures: number;
+  }> {
+    const [latest, checkpoints, unresolvedFailures] = await Promise.all([
+      this.prisma.indexerCheckpoint.findFirst({
+        orderBy: { updatedAt: "desc" },
+        select: { updatedAt: true },
+      }),
+      this.prisma.indexerCheckpoint.count(),
+      this.prisma.indexerFailure.count({ where: { resolvedAt: null } }),
+    ]);
+    if (!latest) {
+      return { status: "not_started", lagSeconds: null, checkpoints, unresolvedFailures };
+    }
+    const lagSeconds = Math.max(0, Math.floor((Date.now() - latest.updatedAt.getTime()) / 1000));
+    return {
+      status: lagSeconds > 1_800 ? "stale" : "up",
+      lagSeconds,
+      checkpoints,
+      unresolvedFailures,
+    };
   }
 
   /** Minimal Prometheus exposition; the full stack scrapes this endpoint. */
@@ -397,7 +453,19 @@ export class PlatformService {
   }
 
   async treasuryOverview(user: AuthUser, merchantId?: string) {
-    const where = merchantId ? { merchantId } : user.role === "ADMIN" ? {} : { merchant: { ownerUserId: user.id } };
+    let where: Prisma.PaymentWhereInput;
+    if (merchantId) {
+      const merchant = await this.prisma.merchant.findUnique({ where: { id: merchantId } });
+      if (!merchant) throw new NotFoundException("merchant not found");
+      requireMerchantAccess(user, merchant);
+      where = { merchantId };
+    } else if (user.role === "ADMIN" || user.role === "OPERATOR") {
+      where = {};
+    } else if (user.viaApiKey && user.scopedMerchantId) {
+      where = { merchantId: user.scopedMerchantId };
+    } else {
+      where = { merchant: { ownerUserId: user.id } };
+    }
     const fees = await this.prisma.payment.aggregate({
       where: { ...where, status: { in: ["SETTLED", "PARTIALLY_REFUNDED", "REFUNDED"] } },
       _sum: { fee: true, amount: true, refunded: true },
@@ -435,6 +503,10 @@ export class PlatformService {
       const merchant = await this.prisma.merchant.findUnique({ where: { id: body.merchantId } });
       if (!merchant) throw new NotFoundException("merchant not found");
       requireMerchantAccess(user, merchant);
+    } else if (user.role !== "ADMIN" && user.role !== "OPERATOR") {
+      // An unscoped key is not limited to one merchant, so only staff may mint
+      // one; otherwise any account could read every merchant through it.
+      throw new ForbiddenException("merchantId is required for non-staff API keys");
     }
     const generated = generateApiKey();
     const row = await this.prisma.apiKey.create({
@@ -486,15 +558,26 @@ export class PlatformService {
   }
 
   async notifications(user: AuthUser, query: { merchantId?: string; unreadOnly?: boolean }) {
+    const staff = user.role === "ADMIN" || user.role === "OPERATOR";
+    let merchantScope: Prisma.NotificationWhereInput;
+    if (query.merchantId) {
+      const merchant = await this.prisma.merchant.findUnique({ where: { id: query.merchantId } });
+      if (!merchant) throw new NotFoundException("merchant not found");
+      requireMerchantAccess(user, merchant);
+      merchantScope = { merchantId: query.merchantId };
+    } else if (staff) {
+      merchantScope = {};
+    } else if (user.viaApiKey && user.scopedMerchantId) {
+      merchantScope = { merchantId: user.scopedMerchantId };
+    } else {
+      merchantScope = { merchant: { ownerUserId: user.id } };
+    }
     const rows = await this.prisma.notification.findMany({
       where: {
-        OR: [
-          { userId: user.id },
-          ...(query.merchantId
-            ? [{ merchantId: query.merchantId }]
-            : [{ merchant: { ownerUserId: user.id } }]),
+        AND: [
+          { OR: [{ userId: user.id }, merchantScope] },
+          ...(query.unreadOnly ? [{ readAt: null }] : []),
         ],
-        ...(query.unreadOnly ? { readAt: null } : {}),
       },
       orderBy: { createdAt: "desc" },
       take: 50,
@@ -505,7 +588,15 @@ export class PlatformService {
   async markRead(user: AuthUser, id: string): Promise<void> {
     const row = await this.prisma.notification.findUnique({ where: { id } });
     if (!row) throw new NotFoundException("notification not found");
-    if (row.userId && row.userId !== user.id) throw new NotFoundException("notification not found");
+    if (row.userId) {
+      if (row.userId !== user.id) throw new NotFoundException("notification not found");
+    } else if (row.merchantId) {
+      const merchant = await this.prisma.merchant.findUnique({ where: { id: row.merchantId } });
+      if (!merchant) throw new NotFoundException("notification not found");
+      requireMerchantAccess(user, merchant);
+    } else if (user.role !== "ADMIN" && user.role !== "OPERATOR") {
+      throw new NotFoundException("notification not found");
+    }
     await this.prisma.notification.update({ where: { id }, data: { readAt: new Date() } });
   }
 

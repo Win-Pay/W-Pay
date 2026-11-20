@@ -488,6 +488,15 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
       await apply({
         type: "merchant.status",
         registryId: registryId.toString(),
+        status: "ACTIVE",
+        txHash: "c1".repeat(32),
+        ledger: 560,
+      }),
+    ).toBe(true);
+    expect(
+      await apply({
+        type: "merchant.status",
+        registryId: registryId.toString(),
         status: "SUSPENDED",
         txHash: "d".repeat(64),
         ledger: 561,
@@ -510,6 +519,172 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     expect(
       (await prisma.merchant.findUniqueOrThrow({ where: { id: m.id } })).settlementAddress,
     ).toBe(settlement);
+  });
+
+  it("does not regress terminal states when an old event is replayed", async () => {
+    const m = await merchant(baseRegistry + 12n, "monotonic");
+    const payer = address();
+
+    const escrow = await prisma.escrow.create({
+      data: {
+        merchantId: m.id,
+        payerAddress: payer,
+        payeeAddress: address(),
+        arbiterAddress: address(),
+        token: "native",
+        amount: 900n,
+        releaseAt: new Date(Date.now() + 86_400_000),
+        status: "FUNDED",
+        contractEscrowId: baseRegistry + 121n,
+      },
+    });
+    created.escrows.push(escrow.id);
+    expect(
+      await apply({
+        type: "escrow.status",
+        contractEscrowId: `${baseRegistry + 121n}`,
+        status: "RELEASED",
+        txHash: "1".repeat(64),
+        ledger: 800,
+      }),
+    ).toBe(true);
+    expect(
+      await apply({
+        type: "escrow.status",
+        contractEscrowId: `${baseRegistry + 121n}`,
+        status: "DISPUTED",
+        txHash: "0".repeat(64),
+        ledger: 799,
+      }),
+    ).toBe(true);
+    expect((await prisma.escrow.findUniqueOrThrow({ where: { id: escrow.id } })).status).toBe(
+      "RELEASED",
+    );
+
+    const payment = await prisma.payment.create({
+      data: {
+        merchantId: m.id,
+        payerAddress: payer,
+        token: "native",
+        amount: 500n,
+        fee: 12n,
+        net: 488n,
+        refunded: 500n,
+        status: "REFUNDED",
+        contractPaymentId: baseRegistry + 122n,
+        txHash: "2".repeat(64),
+      },
+    });
+    created.payments.push(payment.id);
+    const refund = await prisma.refund.create({
+      data: {
+        paymentId: payment.id,
+        merchantId: m.id,
+        payerAddress: payer,
+        amount: 500n,
+        reason: "monotonic",
+        status: "APPROVED",
+        contractRefundId: baseRegistry + 123n,
+        decidedAt: new Date(),
+      },
+    });
+    created.refunds.push(refund.id);
+    expect(
+      await apply({
+        type: "payment.refunded",
+        contractPaymentId: `${baseRegistry + 122n}`,
+        refunded: "200",
+        txHash: "3".repeat(64),
+        ledger: 801,
+      }),
+    ).toBe(true);
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).refunded).toBe(
+      500n,
+    );
+    expect(
+      await apply({
+        type: "refund.rejected",
+        contractRefundId: `${baseRegistry + 123n}`,
+        txHash: "4".repeat(64),
+        ledger: 802,
+      }),
+    ).toBe(true);
+    expect((await prisma.refund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe(
+      "APPROVED",
+    );
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        number: `${run}-inv-12`,
+        merchantId: m.id,
+        token: "native",
+        amount: 100n,
+        dueAt: new Date(Date.now() + 86_400_000),
+        status: "CANCELLED",
+        contractInvoiceId: baseRegistry + 124n,
+      },
+    });
+    created.invoices.push(invoice.id);
+    expect(
+      await apply({
+        type: "invoice.status",
+        contractInvoiceId: `${baseRegistry + 124n}`,
+        status: "EXPIRED",
+        txHash: "5".repeat(64),
+        ledger: 803,
+      }),
+    ).toBe(true);
+    expect((await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).status).toBe(
+      "CANCELLED",
+    );
+
+    const window = await prisma.settlementWindow.create({
+      data: {
+        merchantId: m.id,
+        token: "native",
+        periodStart: new Date(),
+        periodEnd: new Date(Date.now() + 86_400_000),
+        status: "EXECUTED",
+        windowIdOnChain: baseRegistry + 125n,
+        executedAt: new Date(),
+      },
+    });
+    created.windows.push(window.id);
+    await apply({
+      type: "settlement.closed",
+      windowIdOnChain: `${baseRegistry + 125n}`,
+      total: "1000",
+      txHash: "6".repeat(64),
+      ledger: 804,
+    });
+    await apply({
+      type: "settlement.cancelled",
+      windowIdOnChain: `${baseRegistry + 125n}`,
+      txHash: "7".repeat(64),
+      ledger: 805,
+    });
+    const executed = await prisma.settlementWindow.findUniqueOrThrow({ where: { id: window.id } });
+    expect(executed.status).toBe("EXECUTED");
+
+    expect(
+      await apply({
+        type: "merchant.status",
+        registryId: (baseRegistry + 12n).toString(),
+        status: "CLOSED",
+        txHash: "8".repeat(64),
+        ledger: 806,
+      }),
+    ).toBe(true);
+    await apply({
+      type: "merchant.status",
+      registryId: (baseRegistry + 12n).toString(),
+      status: "ACTIVE",
+      txHash: "9".repeat(64),
+      ledger: 807,
+    });
+    expect((await prisma.merchant.findUniqueOrThrow({ where: { id: m.id } })).status).toBe(
+      "CLOSED",
+    );
   });
 
   it("retries a failed projection and resolves it once the record becomes linkable", async () => {

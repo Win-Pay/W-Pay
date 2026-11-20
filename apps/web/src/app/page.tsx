@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { PublicInvoiceRecord } from "@wpay/types";
 import { Alert, Badge, Brand, Button, Card, Field, Input, statusTone } from "@wpay/ui";
-import { formatAmount, useSession, type FreighterLike } from "@wpay/hooks";
+import {
+  assertFreighterNetwork,
+  formatAmount,
+  useSession,
+  type FreighterLike,
+} from "@wpay/hooks";
 
 function freighter(): FreighterLike | null {
   if (typeof window === "undefined") return null;
@@ -144,6 +149,7 @@ export default function CheckoutPage(): React.ReactElement {
       setPhase("signing");
       const intent = await api.invoices.payIntent(invoice.number, wallet);
       setNetworkPassphrase(intent.networkPassphrase);
+      await assertFreighterNetwork(intent.networkPassphrase, walletApi);
       const signed = await walletApi.signTransaction(intent.xdr, {
         networkPassphrase: intent.networkPassphrase,
         address: wallet,

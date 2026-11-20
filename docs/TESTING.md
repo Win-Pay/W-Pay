@@ -33,13 +33,14 @@ same `cargo test` invocation.
 pnpm test
 ```
 
-230 tests pass and 2 are skipped, across six packages:
+239 tests pass and 2 are skipped, across seven packages:
 
 | Package | Tests | Focus |
 | --- | --- | --- |
-| `@wpay/api` | 164 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions and webhooks |
-| `@wpay/indexer` | 29 | Event decoding, projections for every domain, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
-| `@wpay/sdk` | 13 | HTTP client (credentials included, CSRF header, no refresh token in body), automatic refresh retry, call builders (including settlement windows), Soroban gateway, wallet signers |
+| `@wpay/api` | 167 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions, settlements and webhooks |
+| `@wpay/indexer` | 30 | Event decoding, projections for every domain, terminal-state protection on replay, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
+| `@wpay/sdk` | 14 | HTTP client (credentials included, CSRF header, no refresh token in body, GET query never sent as a body), automatic refresh retry, call builders (including settlement windows), Soroban gateway, wallet signers |
+| `@wpay/hooks` | 4 | Freighter network passphrase/name matching and refusal to sign on a mismatched network |
 | `@wpay/shared` | 10 | Cursor encoding, webhook HMAC/verification, wallet messages, error mapping |
 | `@wpay/e2e` | 10 (+2 skipped) | Env-name mapping vs `.env.example`, fee/amount parity, call construction, wallet message, webhook tamper tests; live-API tests skip unless `WPAY_E2E_API_URL` is set |
 | `@wpay/database` | 4 | Cursor paging, bigint serialization, migration helpers |
@@ -65,9 +66,9 @@ rollbacks.
 DATABASE_URL=... JWT_SECRET=... pnpm --filter @wpay/api test:coverage
 ```
 
-Measured 2026-11-13: **89.4% statements**, 71.12% branches, 92.48% functions.
-Payment module 90.03%, invoices 91.95%, operations (refunds/subscriptions)
-91.49%, platform 91.97%, auth 90.76%. The 80% overall / 90% money-path targets
+Measured 2026-11-20: **88.8% statements**, 72.73% branches, 92.02% functions.
+Payment module 90.03%, invoices 92.28%, operations (refunds/subscriptions)
+91.81%, platform 90.6%, auth 89.86%. The 80% overall / 90% money-path targets
 are enforced by review, not by a coverage threshold in CI.
 
 ### Playwright browser flow
@@ -77,16 +78,26 @@ pnpm exec playwright install --with-deps chromium
 pnpm test:browser
 ```
 
-Five Chromium tests drive the checkout and landing pages with a mocked Freighter
-provider and mocked API routes: a missing wallet is reported instead of paying,
-merchant details and the fee split are shown before signing, a normal
-connect/sign/submit sequence submits exactly one transaction and shows the
-confirmed hash with a receipt and Explorer link, a `FAILED` submission surfaces
-an error without marking the invoice paid, and `/landing` renders separately
-without replacing checkout. Measured 2026-11-13: 5 passed (46.3 s, after
-installing Chromium and its system libraries). The CI `browser` job runs the
-same suite. These tests exercise the UI and wallet adapter contract; they do not
-load the real Freighter extension or submit to Testnet.
+Nine Chromium tests run in three projects, each against its own Next dev server
+built once by `tests/playwright/prepare.mjs`:
+
+- **checkout** (5): the customer app with a mocked Freighter provider and mocked
+  API routes. A missing wallet is reported instead of paying, merchant details
+  and the fee split are shown before signing, a normal connect/sign/submit
+  sequence submits exactly one transaction and shows the confirmed hash with a
+  receipt and Explorer link, a `FAILED` submission surfaces an error without
+  marking the invoice paid, and `/landing` renders separately without replacing
+  checkout.
+- **merchant** (2): signs in, shows merchant status/fee/registry and API-backed
+  analytics, switches to the Payments tab and renders the payment row; a rejected
+  sign-in shows an error instead of an empty dashboard.
+- **admin** (2): signs in, shows health and indexer failure counts; a `USER`
+  account is refused operator access.
+
+Measured 2026-11-20: 9 passed (1.6 min, after installing Chromium and its system
+libraries). The CI `browser` job runs the same suite. These tests exercise the UI
+and wallet adapter contract; they do not load the real Freighter extension or
+submit to Testnet.
 
 ## Soroban resource measurements
 

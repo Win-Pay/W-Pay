@@ -67,6 +67,26 @@ For each configured contract (`Indexer.ingestContract`):
 | `settlement_opened` / `closed` / `executed` / `cancelled` | Link and advance settlement window |
 | merchant registered/status/settlement | Link `registryId`, update status/settlement address |
 
+### Terminal-state protection
+
+Retries and out-of-order replays must not move a record backwards. Projections
+apply conditional updates from an allowed source state and treat a terminal
+record as already applied:
+
+- refunded amounts are monotonic; a stale `refund` event cannot lower `refunded`.
+- refund decisions apply only while `PENDING`; a later stale request/approval
+  cannot reopen an `APPROVED` or `REJECTED` refund.
+- invoices move to `PAID`/`CANCELLED`/`EXPIRED` only from `OPEN`.
+- escrows and subscriptions advance from their current state; a replayed
+  `created`/`charged` event is a no-op.
+- settlement windows only move forward (`OPEN → CLOSED → EXECUTED`,
+  `OPEN|CLOSED → CANCELLED`).
+- merchant status applies from an allowed source state
+  (`PENDING|ACTIVE|SUSPENDED → CLOSED`, `ACTIVE → SUSPENDED`, etc.).
+
+The integration suite includes a replay test that applies a stale event after a
+terminal projection and asserts the terminal state is unchanged.
+
 ### Linking heuristics
 
 API-created records do not know the contract id until an event arrives. The

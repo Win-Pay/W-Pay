@@ -183,17 +183,28 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
   }, 60_000);
 
   describe("health", () => {
-    it("reports the database as reachable", async () => {
-      const response = await json<{ status: string; database: string }>(harness.baseUrl, "/health");
+    it("reports the database as reachable and surfaces dependencies", async () => {
+      const response = await json<{
+        status: string;
+        database: string;
+        redis: string;
+        indexer: { status: string };
+      }>(harness.baseUrl, "/health");
       expect(response.status).toBe(200);
       expect(response.body.status).toBe("ok");
       expect(response.body.database).toBe("up");
+      expect(["up", "down", "not_configured"]).toContain(response.body.redis);
+      expect(["up", "stale", "not_started"]).toContain(response.body.indexer.status);
     });
 
     it("reports readiness separately from liveness", async () => {
-      const response = await json<{ ready: boolean }>(harness.baseUrl, "/health/ready");
+      const response = await json<{ ready: boolean; indexer: { status: string } }>(
+        harness.baseUrl,
+        "/health/ready",
+      );
       expect([200, 503]).toContain(response.status);
       expect(response.body).toHaveProperty("ready");
+      expect(response.body.indexer).toHaveProperty("status");
     });
   });
 
@@ -525,6 +536,52 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       );
       expect(response.status).toBe(200);
       expect(response.body.description).toBe("updated by test");
+    });
+
+    it("keeps a registry-linked settlement address under on-chain control", async () => {
+      const owner = await harness.prisma.user.findUniqueOrThrow({
+        where: { email: `merchant.${run}@wpay.test` },
+      });
+      const linked = await harness.prisma.merchant.create({
+        data: {
+          name: `Linked ${run}`,
+          ownerAddress: address(),
+          settlementAddress: settlement,
+          feeBps: 250,
+          status: "PENDING",
+          ownerUserId: owner.id,
+          registryId: BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000)),
+        },
+      });
+      created.merchants.push(linked.id);
+      const newSettlement = address();
+
+      const patch = await json(harness.baseUrl, `/merchants/${linked.id}`, {
+        method: "PATCH",
+        token: userToken,
+        body: { settlementAddress: newSettlement },
+      });
+      expect(patch.status).toBe(409);
+      const stored = await harness.prisma.merchant.findUniqueOrThrow({ where: { id: linked.id } });
+      expect(stored.settlementAddress).toBe(settlement);
+
+      const intent = await json<{ method: string }>(
+        harness.baseUrl,
+        `/merchants/${linked.id}/settlement-intent`,
+        { method: "POST", token: userToken, body: { settlementAddress: newSettlement } },
+      );
+      // Contracts are unconfigured in CI, so the API must refuse rather than
+      // silently update the projection.
+      expect(intent.status).toBe(409);
+
+      const outcome = await json<{ merchant: { status: string }; transaction: unknown }>(
+        harness.baseUrl,
+        `/merchants/${linked.id}/approve`,
+        { method: "POST", token: adminToken },
+      );
+      expect(outcome.status).toBe(409);
+      const unchanged = await harness.prisma.merchant.findUniqueOrThrow({ where: { id: linked.id } });
+      expect(unchanged.status).toBe("PENDING");
     });
 
     it("404s an unknown merchant", async () => {
@@ -1073,6 +1130,51 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect([400, 403]).toContain(response.status);
     });
 
+    it("does not expose another merchant through query filters", async () => {
+      const other = await harness.prisma.merchant.create({
+        data: {
+          name: `Other ${run}`,
+          ownerAddress: address(),
+          settlementAddress: address(),
+          feeBps: 250,
+          status: "ACTIVE",
+          ownerUserId: adminId,
+        },
+      });
+      created.merchants.push(other.id);
+      const plan = await harness.prisma.subscriptionPlan.create({
+        data: { merchantId: other.id, token: address(), amount: 100n, intervalSecs: 30 },
+      });
+      created.plans.push(plan.id);
+      const notification = await harness.prisma.notification.create({
+        data: { merchantId: other.id, title: "other", body: "other merchant only" },
+      });
+
+      const notifications = await json(harness.baseUrl, `/notifications?merchantId=${other.id}`, {
+        token: userToken,
+      });
+      expect(notifications.status).toBe(403);
+
+      const marked = await json(harness.baseUrl, `/notifications/${notification.id}/read`, {
+        method: "POST",
+        token: userToken,
+      });
+      expect(marked.status).toBe(403);
+
+      const treasury = await json(harness.baseUrl, `/treasury/overview?merchantId=${other.id}`, {
+        token: userToken,
+      });
+      expect(treasury.status).toBe(403);
+
+      const subscriptions = await json<{ items: unknown[] }>(
+        harness.baseUrl,
+        `/subscriptions?merchantId=${other.id}`,
+        { token: userToken },
+      );
+      expect(subscriptions.status).toBe(200);
+      expect(subscriptions.body.items).toHaveLength(0);
+    });
+
     it("restricts audit logs to operators", async () => {
       const forbidden = await json(harness.baseUrl, "/admin/audit-logs", { token: userToken });
       expect(forbidden.status).toBe(403);
@@ -1181,6 +1283,23 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
         { headers: { "x-api-key": response.body.key } },
       );
       expect(scoped.status).toBe(200);
+    });
+
+    it("refuses to issue an unscoped API key to a non-staff account", async () => {
+      const denied = await json(harness.baseUrl, "/api-keys", {
+        method: "POST",
+        token: userToken,
+        body: { name: `unscoped-${run}` },
+      });
+      expect(denied.status).toBe(403);
+
+      const scoped = await json<{ key: string; id: string }>(harness.baseUrl, "/api-keys", {
+        method: "POST",
+        token: userToken,
+        body: { name: `owned-${run}`, merchantId },
+      });
+      expect(scoped.status).toBe(201);
+      created.apiKeys.push(scoped.body.id);
     });
 
     it("revokes an API key and then rejects it", async () => {

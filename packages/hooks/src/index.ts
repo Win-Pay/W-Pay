@@ -70,7 +70,10 @@ const LEGACY_REFRESH_KEY = "wpay.refresh";
  * localhost. A missing NEXT_PUBLIC_API_URL is a deployment error the UI must
  * show; only local origins fall back to the development API.
  */
-export function resolveApiBaseUrl(explicit?: string): { url: string; error: string | null } {
+export function resolveApiBaseUrl(
+  explicit?: string,
+  variableName = "NEXT_PUBLIC_API_URL",
+): { url: string; error: string | null } {
   const configured =
     explicit ||
     (typeof process !== "undefined" ? process.env?.NEXT_PUBLIC_API_URL : undefined);
@@ -83,8 +86,7 @@ export function resolveApiBaseUrl(explicit?: string): { url: string; error: stri
   }
   return {
     url: "https://configuration-required.invalid",
-    error:
-      "NEXT_PUBLIC_API_URL is not configured for this deployment. Set it to the public backend URL and rebuild.",
+    error: `${variableName} is not configured for this deployment. Set it to the public backend URL and rebuild.`,
   };
 }
 
@@ -234,6 +236,9 @@ export interface WalletState {
 export interface FreighterLike {
   getPublicKey?: () => Promise<string>;
   getAddress?: () => Promise<{ address: string } | string>;
+  getNetwork?: () => Promise<
+    string | { network?: string; networkPassphrase?: string }
+  >;
   signTransaction: (
     xdr: string,
     options: { networkPassphrase: string; address?: string },
@@ -265,6 +270,48 @@ export async function freighterAddress(): Promise<string> {
   return value;
 }
 
+/**
+ * Refuses to sign when the extension reports a network other than the one the
+ * intent targets. Older extensions lack `getNetwork`, so this can only add a
+ * check, never remove the wallet's own network guard.
+ */
+export async function assertFreighterNetwork(
+  networkPassphrase: string,
+  wallet: FreighterLike | null = freighterApi(),
+): Promise<void> {
+  if (!wallet?.getNetwork) return;
+  let reported: string;
+  try {
+    const network = await wallet.getNetwork();
+    reported =
+      typeof network === "string"
+        ? network
+        : (network.networkPassphrase ?? network.network ?? "");
+  } catch {
+    // A wallet that cannot report its network is left to enforce it itself.
+    return;
+  }
+  if (!reported) return;
+
+  const expectedTestnet = networkPassphrase.startsWith("Test SDF Network");
+  const expectedPublic = networkPassphrase.startsWith("Public Global Stellar Network");
+  const normalized = reported.toUpperCase();
+  const matches =
+    reported === networkPassphrase ||
+    (expectedTestnet && normalized.includes("TEST")) ||
+    (expectedPublic && normalized.includes("PUBLIC"));
+  if (!matches) {
+    const expected = expectedTestnet
+      ? "Testnet"
+      : expectedPublic
+        ? "Mainnet"
+        : networkPassphrase;
+    throw new Error(
+      `Wallet is on ${reported}, but this transaction targets ${expected}. Switch networks in Freighter and retry.`,
+    );
+  }
+}
+
 /** Signs an unsigned XDR with Freighter and returns the signed envelope. */
 export async function signWithFreighter(
   xdr: string,
@@ -275,6 +322,7 @@ export async function signWithFreighter(
   if (!wallet) {
     throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
   }
+  await assertFreighterNetwork(networkPassphrase, wallet);
   const signed = await wallet.signTransaction(xdr, { networkPassphrase, address });
   return signed.signedTxXdr;
 }

@@ -133,6 +133,11 @@ export const UpdateMerchantSchema = z.object({
 });
 export type UpdateMerchantInput = z.infer<typeof UpdateMerchantSchema>;
 
+export const UpdateMerchantSettlementSchema = z.object({
+  settlementAddress: StellarAddressSchema,
+});
+export type UpdateMerchantSettlementInput = z.infer<typeof UpdateMerchantSettlementSchema>;
+
 export const CreatePaymentSchema = z.object({
   merchantId: z.string().min(1),
   token: StellarAddressSchema,

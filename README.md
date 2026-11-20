@@ -145,7 +145,7 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 164 tests including real Postgres integration |
+| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 167 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
 | Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs as a 15-minute GitHub Actions + daily Vercel cron catch-up, **not** as a 5-second worker |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
@@ -184,9 +184,10 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
 - The historical Testnet payment (`db354f7f…e47d`) proves on-chain settlement and
   fee splitting. Its memo was `e2e-invoice`, so after invoice-number memo
   binding it no longer qualifies as an invoice-level confirmation replay.
-- Wallet flows are implemented with Freighter connect/sign/submit. Five
+- Wallet flows are implemented with Freighter connect/sign/submit. Nine
   Playwright tests mock the provider and API (checkout, fee disclosure, failed
-  submission and the landing page); real-extension signing is not covered by CI.
+  submission, landing page, merchant dashboard, admin dashboard); real-extension
+  signing is not covered by CI.
 - The mobile app is a read-only PWA (no wallet signing), and the extension does
   not sign transactions.
 - Refund approval records the decision without fabricating a transaction:
@@ -238,7 +239,10 @@ network returns `SUCCESS`.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/CONTRACTS.md](docs/CONTRACTS.md) for each contract's state machine and
-security assumptions.
+security assumptions. Settlement batches, their intents and the reconciliation
+runbook are in [docs/SETTLEMENT.md](docs/SETTLEMENT.md); Testnet evidence and
+re-verification steps are in
+[docs/TESTNET_VERIFICATION.md](docs/TESTNET_VERIFICATION.md).
 
 ## Quickstart
 
@@ -272,11 +276,11 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Contract WASM build | `pnpm contracts:build` | 16/16 artifacts; hashes match deployed Testnet WASM |
 | Testnet deployment | `node scripts/deploy-testnet.cjs` | 16 contracts, all upload/create txs `SUCCESS` |
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
-| TypeScript typecheck | `pnpm typecheck` | 22/22 tasks pass |
+| TypeScript typecheck | `pnpm typecheck` | 23/23 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL`/`REDIS_URL` | 230 passed, 2 skipped (api 164, indexer 29, sdk 13, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 89.78% statements, 73.07% branches, 92.43% functions; payments 90.03%, invoices 92.28%, operations 91.49%, auth 89.86%, platform 91.97% |
-| Browser tests | `pnpm test:browser` | 5 passed (mocked Freighter + API) |
+| TypeScript tests | `pnpm test` with `DATABASE_URL` | 239 passed, 2 skipped (api 167, indexer 30, sdk 14, hooks 4, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 88.8% statements, 72.73% branches, 92.02% functions; payments 90.03%, invoices 92.28%, operations 91.81%, auth 89.86%, platform 90.6% |
+| Browser tests | `pnpm test:browser` | 9 passed: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
 | Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 454 ms) with the bearer secret after the 2026-11-13 redeploy; 401 without/with a wrong secret; 404 when unset |

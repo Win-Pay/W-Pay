@@ -203,6 +203,28 @@ export const calls = {
     };
   },
 
+  /** MerchantRegistry.update_settlement(owner, merchant_id, settlement) */
+  updateMerchantSettlement(
+    owner: string,
+    merchantId: bigint | number,
+    settlement: string,
+  ): ContractCall {
+    return {
+      contract: "merchantRegistry",
+      method: "update_settlement",
+      args: [scv.address(owner), scv.u64(merchantId), scv.address(settlement)],
+    };
+  },
+
+  /** MerchantRegistry.reactivate(operator, merchant_id) */
+  reactivateMerchant(operator: string, merchantId: bigint | number): ContractCall {
+    return {
+      contract: "merchantRegistry",
+      method: "reactivate",
+      args: [scv.address(operator), scv.u64(merchantId)],
+    };
+  },
+
   /** MerchantRegistry.approve(operator, id) */
   approveMerchant(operator: string, merchantId: bigint | number): ContractCall {
     return {

@@ -45,9 +45,10 @@ describe("merchant access rule", () => {
     expect(canAccessMerchant({ ...scoped, scopedMerchantId: "m_2" }, merchant)).toBe(false);
   });
 
-  it("treats an unscoped API key as read-all", () => {
+  it("does not widen an unscoped non-staff API key beyond its owner", () => {
     const unscoped = user({ id: "k", role: "USER", viaApiKey: true, scopedMerchantId: null });
-    expect(canAccessMerchant(unscoped, merchant)).toBe(true);
+    expect(canAccessMerchant(unscoped, merchant)).toBe(false);
+    expect(canAccessMerchant({ ...unscoped, id: merchant.ownerUserId }, merchant)).toBe(true);
   });
 });
 
