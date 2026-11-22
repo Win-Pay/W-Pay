@@ -77,15 +77,25 @@ pnpm db:migrate     # prisma migrate deploy
 ```
 
 Run migrations before rolling pods. Take a backup first; a failed migration is
-not automatically reversible. Seed only the first time.
-`DATABASE_URL=... pnpm db:backup` writes a custom-format dump;
-`pnpm db:restore-drill <dump>` restores it into a scratch database and compares
-row counts. The daily workflow in `.github/workflows/backup.yml` does both.
+not automatically reversible. Seed only the first time. The repository currently
+has 8 migrations; `0008_settlement_automation` adds settlement batch/entry
+columns and indexes. The hosted Vercel/Neon deployment was last migrated at 7,
+so run `pnpm db:migrate` against Neon before deploying the API code that uses
+those columns.
 
-For an encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key) before
-running the backup; the script writes `<dump>.gpg`, removes the plaintext and
-prints the ciphertext hash. Upload only the `.gpg` file to storage in a
-different account/region; keep the private key offline. Managed Postgres PITR
+`DATABASE_URL=... pnpm db:backup` writes a custom-format dump, validates its
+archive TOC when `pg_restore` is installed (otherwise warns), and writes a
+`.sha256` sidecar;
+`pnpm db:restore-drill <dump>` restores it into a scratch database and compares
+every public table plus applied migrations. The daily workflow in
+`.github/workflows/backup.yml` does both and fails closed on mismatch.
+
+For an encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key) or
+`BACKUP_GPG_PASSPHRASE` (symmetric AES-256) before running the backup; the
+script writes `<dump>.gpg`, removes the plaintext and checksums the ciphertext.
+Upload only the ciphertext plus `.sha256` to storage in a different
+account/region; keep the private key/passphrase offline. Set
+`BACKUP_RETENTION_DAYS` to prune old `wpay-*` artifacts. Managed Postgres PITR
 is still required for RPO in minutes.
 
 ## 3. Images
@@ -155,13 +165,37 @@ Operator checks:
 ```bash
 curl -H "Authorization: Bearer <admin-jwt>" https://api.example.com/v1/admin/indexer/status
 curl -H "Authorization: Bearer <admin-jwt>" https://api.example.com/v1/admin/indexer/failures
+curl -H "Authorization: Bearer <admin-jwt>" https://api.example.com/v1/admin/indexer/consistency
 ```
 
 Indexer unresolved failures also appear in its `/health` (`degraded`) and
 `wpay_indexer_unresolved_failures`. Review a failure before resolving it; the
-resolve endpoint is audit-logged. Settlement batches are created with
-`POST /v1/settlements/batches` (1–20 entries, capped because a 50-entry execute
-exceeded the local Soroban budget) and advanced through link/intents/execute.
+resolve endpoint is audit-logged. Historical replay is
+`POST /v1/admin/indexer/replay` with `{"contract":"...","fromLedger":123}`; it is
+bounded by `maxPages` and audit-logged.
+
+Settlement batches can still be created with `POST /v1/settlements/batches`
+(1–20 entries, capped because a 50-entry execute exceeded the local Soroban
+budget) and advanced through link/intents/execute. Automatic settlement is
+opt-in and must be configured deliberately:
+
+```bash
+SETTLEMENT_AUTOMATION=off          # default: no automatic batches
+SETTLEMENT_OPERATOR_ADDRESS=G...   # or derive it from SOROBAN_SOURCE_SECRET
+SETTLEMENT_HOLD_HOURS=24
+SETTLEMENT_MAX_ENTRIES=20
+SETTLEMENT_MAX_STEPS=5
+SETTLEMENT_RETRY_MINUTES=30
+SETTLEMENT_DELAY_ALERT_MINUTES=120
+```
+
+`prepare` creates batches from due payments; `execute` additionally requires
+`SOROBAN_SOURCE_SECRET` and signs `open/add/close/execute` as the operator. The
+maintenance endpoint runs it after the indexer pass. Start with `prepare` and a
+supervised `POST /v1/admin/settlements/run` before enabling `execute`. After a
+failure, inspect `GET /v1/admin/settlements/automation` and only then clear the
+backoff with `POST /v1/admin/settlements/:id/retry` (ADMIN). Check
+`GET /v1/admin/settlements/reconciliation` after the first run.
 
 Then exercise one real payment on testnet end to end, with a small amount, and
 confirm the indexer writes the settled payment. Only after that should mainnet
@@ -195,10 +229,13 @@ scheduled runs under load). Run `gh workflow run maintenance.yml` for an
 immediate pass. `GET /v1/internal/maintenance` is disabled unless
 `CRON_SECRET` is set in both Vercel and the GitHub repository secrets, and only
 accepts `Authorization: Bearer $CRON_SECRET`; it drains up to 50 due webhook
-deliveries and runs one indexer pass over every configured contract from the
-stored cursors. Both operations are idempotent, so overlapping runs are safe.
+deliveries, runs one indexer pass over every configured contract from the
+stored cursors, then runs settlement automation in the configured mode
+(`off` by default). All operations are idempotent, so overlapping runs are safe.
 The repository secret is configured and a manual dispatch on 2026-11-13
-returned `ok:true` across all 16 contracts. Lag is minutes rather than the day
+returned `ok:true` across all 16 contracts. The hosted function predates the
+settlement-automation code and migration 0008, so those steps only take effect
+after the owner redeploys and migrates. Lag is minutes rather than the day
 a Vercel-only cron would leave; real-time behaviour still needs the
 Compose/Kubernetes workers. Health still reports
 `database: "up"` because it checks the connection, not worker liveness. Refund

@@ -26,34 +26,58 @@ jobs:
   backup:
     name: Dump production database
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production
     steps:
       - uses: actions/checkout@v4
+      - name: Preflight backup credentials
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not configured; add it under Settings > Secrets and variables > Actions (production environment) before the scheduled backup can run"
+            exit 1
+          fi
+          command -v pg_dump >/dev/null || { echo "::error::pg_dump is missing on the runner"; exit 1; }
+          command -v psql >/dev/null || { echo "::error::psql is missing on the runner"; exit 1; }
+          if [ -n "$BACKUP_GPG_PASSPHRASE" ]; then
+            echo "backup encryption: AES-256 symmetric (BACKUP_GPG_PASSPHRASE)"
+          else
+            echo "::warning::BACKUP_GPG_PASSPHRASE is not configured; the dump and its artifact are unencrypted"
+          fi
       - name: Create backup
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          if [ -z "$DATABASE_URL" ]; then
-            echo "::error::DATABASE_URL secret is not configured"; exit 1
-          fi
-          bash scripts/db-backup.sh "$RUNNER_TEMP/wpay.dump"
-      - name: Record row-count manifest
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: bash scripts/db-backup.sh "$RUNNER_TEMP/wpay.dump"
+      - name: Record row-count manifest and metadata
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          tables="User Merchant Payment Invoice Refund Escrow IndexedEvent IndexerCheckpoint _prisma_migrations"
+          set -euo pipefail
           : > "$RUNNER_TEMP/manifest.txt"
+          tables="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")"
           for table in $tables; do
             count="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM \"$table\";")"
             echo "$table=$count" >> "$RUNNER_TEMP/manifest.txt"
           done
           cat "$RUNNER_TEMP/manifest.txt"
+          {
+            echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "pg_dump=$(pg_dump --version)"
+            echo "server=$(psql "$DATABASE_URL" -Atc 'SHOW server_version;')"
+            echo "database_size=$(psql "$DATABASE_URL" -Atc 'SELECT pg_size_pretty(pg_database_size(current_database()));')"
+            echo "sha256=$(cut -d' ' -f1 "$RUNNER_TEMP"/wpay.dump*.sha256)"
+          } > "$RUNNER_TEMP/backup-metadata.txt"
+          cat "$RUNNER_TEMP/backup-metadata.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BACKUP_ARTIFACT }}
           path: |
-            ${{ runner.temp }}/wpay.dump
+            ${{ runner.temp }}/wpay.dump*
             ${{ runner.temp }}/manifest.txt
+            ${{ runner.temp }}/backup-metadata.txt
           retention-days: 30
           if-no-files-found: error
 
@@ -61,6 +85,7 @@ jobs:
     name: Restore production dump into scratch database
     needs: backup
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
@@ -82,12 +107,30 @@ jobs:
         with:
           name: ${{ env.BACKUP_ARTIFACT }}
           path: ${{ runner.temp }}
+      - name: Verify checksum and decrypt
+        env:
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sha256sum -c wpay.dump*.sha256
+          DUMP="$RUNNER_TEMP/wpay.dump"
+          if [ -f "$RUNNER_TEMP/wpay.dump.gpg" ]; then
+            if [ -z "$BACKUP_GPG_PASSPHRASE" ]; then
+              echo "::error::the backup is encrypted but BACKUP_GPG_PASSPHRASE is not configured in this job"
+              exit 1
+            fi
+            printf '%s' "$BACKUP_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-fd 0 --output "$DUMP" --decrypt "$RUNNER_TEMP/wpay.dump.gpg"
+          fi
+          pg_restore --list "$DUMP" >/dev/null
+          echo "DUMP=$DUMP" >> "$GITHUB_ENV"
       - name: Restore and compare counts
         run: |
           set -euo pipefail
           createdb wpay_verify
           pg_restore --no-owner --no-privileges --exit-on-error \
-            --dbname=wpay_verify "$RUNNER_TEMP/wpay.dump"
+            --dbname=wpay_verify "$DUMP"
           failed=0
           while IFS='=' read -r table expected; do
             [ -z "$table" ] && continue
@@ -99,14 +142,23 @@ jobs:
               echo "OK $table=$actual"
             fi
           done < "$RUNNER_TEMP/manifest.txt"
+          source_migrations="$(psql -d wpay_verify -v ON_ERROR_STOP=1 -Atc "SELECT string_agg(migration_name, ',' ORDER BY migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL;")"
+          manifest_migrations="$(psql -d wpay_verify -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM _prisma_migrations;")"
+          if [ -z "$source_migrations" ] || [ "$manifest_migrations" -eq 0 ]; then
+            echo "::error::restored backup has no applied migrations"
+            failed=1
+          fi
           if [ "$failed" -ne 0 ]; then
             echo "::error::restored backup does not match manifest"; exit 1
           fi
 
   restore-drill:
     name: Scripted backup and restore drill
-    needs: [backup]
+    # Runs independently of the production dump/verify jobs: it migrates and
+    # seeds an ephemeral Postgres, so it validates the scripts even when the
+    # DATABASE_URL secret is absent. The production database is not touched.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
@@ -139,8 +191,14 @@ jobs:
           pnpm db:generate
           pnpm --filter @wpay/database migrate
           pnpm db:seed
-      - name: Backup, restore into scratch database and compare
+      - name: Backup, verify checksum, restore into scratch and compare
         env:
           POSTGRES_DB: wpay
           POSTGRES_USER: wpay
-        run: bash scripts/db-restore-drill.sh
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          dump="$RUNNER_TEMP/wpay-drill.dump"
+          bash scripts/db-backup.sh "$dump"
+          if [ -f "$dump.gpg" ]; then dump="$dump.gpg"; fi
+          bash scripts/db-restore-drill.sh "$dump"

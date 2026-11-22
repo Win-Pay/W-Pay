@@ -3,7 +3,7 @@
  * Skipped when DATABASE_URL is absent, matching the API integration suite.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { Keypair, StrKey, nativeToScVal } from "@stellar/stellar-sdk";
 import { randomBytes } from "node:crypto";
 import { PrismaClient } from "@wpay/database";
 import { Indexer, applyProjection } from "./indexer";
@@ -64,7 +64,14 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
     await prisma.subscription.deleteMany({ where: { id: { in: created.subscriptions } } });
     await prisma.subscriptionPlan.deleteMany({ where: { id: { in: created.plans } } });
     await prisma.settlementWindow.deleteMany({ where: { id: { in: created.windows } } });
-    await prisma.indexerFailure.deleteMany({ where: { id: { in: created.failures } } });
+    await prisma.indexerFailure.deleteMany({
+      where: {
+        OR: [{ id: { in: created.failures } }, { contractId: { in: created.checkpoints } }],
+      },
+    });
+    await prisma.indexedEvent.deleteMany({
+      where: { contractId: { in: created.checkpoints } },
+    });
     await prisma.indexerCheckpoint.deleteMany({
       where: { contractId: { in: created.checkpoints } },
     });
@@ -849,5 +856,54 @@ describe.skipIf(!hasDatabase)("indexer projections", () => {
       where: { contractId },
     });
     expect(checkpoint.cursor).toBe("fresh-cursor");
+  });
+
+  it("replays history from an earlier ledger without duplicating events", async () => {
+    const contractId = StrKey.encodeContract(randomBytes(32));
+    created.checkpoints.push(contractId);
+    await prisma.indexerCheckpoint.create({
+      data: { contractId, lastLedger: 500, cursor: "old-cursor" },
+    });
+    const event = {
+      id: "replay-event-1",
+      ledger: 204,
+      txHash: "e".repeat(64),
+      topic: [],
+      value: nativeToScVal(1n),
+    };
+    const getEvents = vi
+      .fn()
+      .mockResolvedValue({ events: [event], cursor: "replay-cursor", latestLedger: 205 });
+    const indexer = new Indexer(prisma, {
+      rpcUrl: "http://127.0.0.1:1",
+      contracts: { paymentRouter: contractId },
+      startLedger: 100,
+      batchSize: 10,
+      logger: () => undefined,
+    });
+    Object.assign(indexer as unknown as { server: unknown }, { server: { getEvents } });
+
+    const first = await indexer.replay("paymentRouter", { fromLedger: 100 });
+    expect(first.done).toBe(true);
+    expect(first.inserted).toBe(1);
+    expect(first.skipped).toBe(0);
+    expect(getEvents.mock.calls[0]?.[0]).toMatchObject({ startLedger: 100 });
+    expect(
+      await prisma.indexedEvent.count({ where: { contractId, eventIndex: "replay-event-1" } }),
+    ).toBe(1);
+
+    const replayAgain = await indexer.replay("paymentRouter", { fromLedger: 100 });
+    expect(replayAgain.inserted).toBe(0);
+    expect(replayAgain.skipped).toBe(1);
+    expect(
+      await prisma.indexedEvent.count({ where: { contractId, eventIndex: "replay-event-1" } }),
+    ).toBe(1);
+
+    const consistency = await indexer.consistency();
+    expect(consistency.events.byKind.unknown).toBeGreaterThanOrEqual(1);
+    expect(consistency.invariants.unknownEvents).toBeGreaterThanOrEqual(1);
+    expect(consistency.failures.unresolved).toBeGreaterThanOrEqual(1);
+    const entry = consistency.contracts.find((row) => row.contractId === contractId);
+    expect(entry).toMatchObject({ configured: true, lastLedger: 205, stale: false });
   });
 });

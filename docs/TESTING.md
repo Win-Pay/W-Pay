@@ -33,12 +33,12 @@ same `cargo test` invocation.
 pnpm test
 ```
 
-239 tests pass and 2 are skipped, across seven packages:
+263 tests pass and 2 are skipped, across seven packages:
 
 | Package | Tests | Focus |
 | --- | --- | --- |
-| `@wpay/api` | 167 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, plus real-Postgres integration flows for payments, refunds, subscriptions, settlements and webhooks |
-| `@wpay/indexer` | 30 | Event decoding, projections for every domain, terminal-state protection on replay, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery |
+| `@wpay/api` | 190 | Access rules, API keys, cookie/CSRF session refresh with rotation and reuse revocation, production config fail-closed checks, validation, error envelope, rate-limit stores, webhook signature/retry/DLQ and concurrent claim, URL guard, settlement batches, memo-bound payment/invoice verification, merchant fee/ownership enforcement, settlement executor open/add/close/execute, resume, budget and mismatch paths, automatic settlement claiming/backoff/reconciliation, indexer replay/consistency endpoints, plus real-Postgres integration flows for payments, refunds, subscriptions, settlements, indexer operations and webhooks |
+| `@wpay/indexer` | 31 | Event decoding, projections for every domain, terminal-state protection on replay, `jsonSafe`, token hashing, checkpoints, durable/expired cursors, dead-letter retry/recovery, bounded historical replay, consistency invariants |
 | `@wpay/sdk` | 14 | HTTP client (credentials included, CSRF header, no refresh token in body, GET query never sent as a body), automatic refresh retry, call builders (including settlement windows), Soroban gateway, wallet signers |
 | `@wpay/hooks` | 4 | Freighter network passphrase/name matching and refusal to sign on a mismatched network |
 | `@wpay/shared` | 10 | Cursor encoding, webhook HMAC/verification, wallet messages, error mapping |
@@ -66,9 +66,9 @@ rollbacks.
 DATABASE_URL=... JWT_SECRET=... pnpm --filter @wpay/api test:coverage
 ```
 
-Measured 2026-11-20: **88.8% statements**, 72.73% branches, 92.02% functions.
-Payment module 90.03%, invoices 92.28%, operations (refunds/subscriptions)
-91.81%, platform 90.6%, auth 89.86%. The 80% overall / 90% money-path targets
+Measured 2026-11-22 on the current checkout: **88.25% statements**, 71.87%
+branches, 91.36% functions. The settlement executor is 90.42% statements after
+adding parser and execute-path tests. The 80% overall / 90% money-path targets
 are enforced by review, not by a coverage threshold in CI.
 
 ### Playwright browser flow
@@ -185,16 +185,24 @@ POSTGRES_PASSWORD=... pnpm db:backup
 POSTGRES_PASSWORD=... pnpm db:restore-drill
 ```
 
-`scripts/db-restore-drill.sh` creates a scratch database, restores the dump,
-compares row counts for the core and new tables (including indexer failures and
-settlement batches) and always drops the scratch database. It passes locally
-against the compose Postgres in about 1 second for the seeded fixture.
+`scripts/db-restore-drill.sh` validates the `.sha256` sidecar (or
+`EXPECTED_SHA256`), checks the archive TOC when `pg_restore` is installed (and
+warns when only the Docker fallback is available), creates a scratch database,
+restores the dump, compares row counts for every public table dynamically and
+compares the applied `_prisma_migrations` set, then always drops the scratch
+database. It passes locally against the compose Postgres in about 1 second for
+the seeded fixture (8 migrations), including AES-256 decryption; the local run
+skipped TOC validation because `pg_restore` is not installed.
 `.github/workflows/backup.yml` runs a daily production dump, restores it into an
 ephemeral Postgres and compares every row count with the manifest captured at
-dump time. Set `BACKUP_GPG_RECIPIENT` to encrypt an off-site copy
-(`scripts/db-backup.sh` writes `<dump>.gpg` and deletes the plaintext); the
-drill decrypts `.gpg` dumps with the matching secret key. Encrypted round-trip
-verified locally 2026-11-12.
+dump time; its verify job runs `pg_restore --list`. Set
+`BACKUP_GPG_RECIPIENT` for public-key encryption or `BACKUP_GPG_PASSPHRASE` for
+symmetric AES-256; `scripts/db-backup.sh` writes `<dump>.gpg`, deletes the
+plaintext and writes a ciphertext `.sha256`. The drill decrypts either form.
+Encrypted round-trip and retention pruning were verified locally on 2026-11-22.
+The production backup/verify jobs have not run because `DATABASE_URL` is absent;
+the independent `restore-drill` job runs against an ephemeral Postgres but the
+updated workflow has not run on GitHub yet.
 
 ## Build and type checks
 
@@ -253,9 +261,11 @@ keyless OIDC, then verifies signatures before Helm upgrade.
 - Long-running incident drills and chaos scenarios; backup/restore and encrypted
   backup round-trips are automated, but failover RTO/RPO is not measured.
 
-GitHub Actions runs on commit `3b197b0` (2026-11-12) succeeded for both `CI`
-and `Security`: Soroban contracts, TypeScript workspace, Rust dependency audit,
-browser wallet flow, indexer/API container builds, k6 load test, CodeQL,
-Trivy and Gitleaks. Dependency review is a pull-request-only job and was
-skipped on the push. Image signing runs in the deploy workflow and was not
-executed.
+The latest recorded remote green run is commit `aea4376` (2026-11-13) for both
+`CI` and `Security`: Soroban contracts, TypeScript workspace, Rust dependency
+audit, browser wallet flow, indexer/API container builds, k6 load test, CodeQL,
+Trivy and Gitleaks. The workflows in this checkout add `cargo clippy -D
+warnings`, the ignored resource benchmark, Prisma/Compose/shell validation, and
+a push/schedule production dependency audit; those additions have not yet run
+on GitHub. Dependency review remains pull-request-only. Image signing runs in
+the deploy workflow and was not executed.

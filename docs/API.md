@@ -4,6 +4,13 @@ Base URL: `${API_PUBLIC_URL}/v1`. All requests and responses are JSON.
 Amounts are decimal strings in base units (`"10000000"` = 1.0000000 XLM or the
 asset's 7-decimal unit).
 
+**Hosted deployment note (2026-11-22):** the hosted Vercel API was last migrated
+at 7 and has not been redeployed with the checkout's settlement automation and
+indexer replay/consistency routes (`0008_settlement_automation` is still
+pending). They are implemented and tested in this repository; run
+`pnpm db:migrate` against Neon and redeploy the API before relying on them in
+production.
+
 ## Authentication
 
 | Method | Header |
@@ -180,6 +187,10 @@ envelope, memo, contract arguments and emitted event before the invoice becomes
 | POST | `/settlements/:id/intents` | operator | Open/add-entry/close XDR intents |
 | POST | `/settlements/:id/execute-intent` | operator | Execute intent when `CLOSED` |
 | POST | `/settlements/:id/cancel-intent` | admin | Cancel a non-executed window |
+| POST | `/admin/settlements/run` | operator (`execute:true` requires admin) | Run the automatic prepare/execute worker |
+| GET | `/admin/settlements/automation` | operator | Recent automatic batches, attempts, errors and next retry |
+| GET | `/admin/settlements/reconciliation` | operator/merchant scope | Payable/allocated totals and window invariant report |
+| POST | `/admin/settlements/:id/retry` | admin | Clear a failed batch's backoff |
 | GET | `/treasury/overview` | admin | Treasury balances and fees |
 | POST | `/treasury/withdraw-intent` | admin | Unsigned withdraw XDR |
 | GET/POST/DELETE | `/api-keys`, `/api-keys/:id` | merchant | Manage scoped keys |
@@ -188,9 +199,11 @@ envelope, memo, contract arguments and emitted event before the invoice becomes
 | POST | `/admin/pause` | admin | Build pause transaction |
 | POST | `/admin/unpause` | admin | Build unpause transaction |
 | GET | `/admin/audit-logs` | admin | Audit trail |
-| GET | `/admin/indexer/status` | admin | Checkpoints and unresolved failures |
-| GET | `/admin/indexer/failures` | admin | Dead-letter rows |
-| POST | `/admin/indexer/failures/:id/resolve` | admin | Mark a reviewed failure resolved (audited) |
+| GET | `/admin/indexer/status` | operator | Checkpoints and unresolved failures |
+| GET | `/admin/indexer/failures` | operator | Dead-letter rows |
+| POST | `/admin/indexer/failures/:id/resolve` | operator | Mark a reviewed failure resolved (audited) |
+| POST | `/admin/indexer/replay` | admin | Reset a checkpoint and replay bounded pages (audited) |
+| GET | `/admin/indexer/consistency` | operator | Staleness, failures and projection invariants |
 | GET | `/admin/merchants` | admin | All merchants |
 | POST | `/transactions/submit` | public | Submit a signed XDR (signed by the caller) |
 

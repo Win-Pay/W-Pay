@@ -21,6 +21,8 @@ import type { TransactionIntent, UserRole } from "@wpay/types";
 import { clampPageSize } from "@wpay/config";
 import { encodeCursor } from "@wpay/shared";
 import { Prisma, serializeBigInts } from "@wpay/database";
+import type { ContractName } from "@wpay/config";
+import { Indexer } from "@wpay/indexer/indexer";
 import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
@@ -817,6 +819,12 @@ export class NotificationsController {
   }
 }
 
+const IndexerReplaySchema = z.object({
+  contract: z.string().min(1),
+  fromLedger: z.coerce.number().int().min(0).optional(),
+  maxPages: z.coerce.number().int().min(1).max(50).default(10),
+});
+
 @ApiTags("admin")
 @Controller("admin")
 export class AdminController {
@@ -824,7 +832,17 @@ export class AdminController {
     private readonly platform: PlatformService,
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  private indexer(): Indexer {
+    return new Indexer(this.prisma, {
+      rpcUrl: this.config.env.STELLAR_RPC_URL ?? this.config.network.rpcUrl,
+      contracts: this.config.contracts,
+      startLedger: Number(process.env.INDEXER_START_LEDGER ?? 1),
+      batchSize: Number(process.env.INDEXER_BATCH_SIZE ?? 100),
+    });
+  }
 
   @Roles("ADMIN")
   @Post("pause")
@@ -919,6 +937,43 @@ export class AdminController {
       txHash: row.txHash,
     });
     return { resolved: true };
+  }
+
+  /**
+   * Re-reads history from an earlier ledger. Deduplication is enforced by the
+   * unique event index, so this cannot apply a projection twice. The page cap
+   * keeps a large backfill inside the request timeout; repeat to continue.
+   */
+  @Roles("ADMIN")
+  @Post("indexer/replay")
+  async replayIndexer(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodPipe(IndexerReplaySchema)) body: z.infer<typeof IndexerReplaySchema>,
+  ) {
+    const contract = body.contract as ContractName;
+    if (!(contract in this.config.contracts) || !this.config.contracts[contract]) {
+      throw new BadRequestException(`contract ${body.contract} is not configured`);
+    }
+    const result = await this.indexer().replay(contract, {
+      fromLedger: body.fromLedger,
+      maxPages: body.maxPages,
+    });
+    await this.audit.record(user, "indexer.replay", "IndexerCheckpoint", result.contractId, {
+      fromLedger: result.fromLedger,
+      pages: result.pages,
+      fetched: result.fetched,
+      inserted: result.inserted,
+      skipped: result.skipped,
+      failed: result.failed,
+      done: result.done,
+    });
+    return result;
+  }
+
+  @Roles("OPERATOR" as UserRole)
+  @Get("indexer/consistency")
+  async indexerConsistency() {
+    return this.indexer().consistency();
   }
 
   @Roles("OPERATOR" as UserRole)

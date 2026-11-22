@@ -17,6 +17,8 @@ import { PrismaService } from "./prisma.service";
 import { Public } from "./common";
 import { WebhooksModule } from "./webhooks/webhooks.controller";
 import { WebhooksService } from "./webhooks/webhooks.service";
+import { SettlementAutomationService } from "./settlement.service";
+import { SettlementModule } from "./settlement.controller";
 
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -56,6 +58,7 @@ export class MaintenanceService {
     private readonly prisma: PrismaService,
     private readonly webhooks: WebhooksService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly settlement?: SettlementAutomationService,
   ) {}
 
   async run(): Promise<Record<string, unknown>> {
@@ -92,10 +95,23 @@ export class MaintenanceService {
       this.logger.warn(`indexer pass failed: ${message}`);
     }
 
+    let settlement: Record<string, unknown> = { skipped: "settlement_worker_not_configured" };
+    let settlementError: string | null = null;
+    if (this.settlement) {
+      try {
+        settlement = { ...(await this.settlement.run()) };
+      } catch (error) {
+        settlementError = describeError(error);
+        settlement = { error: settlementError };
+        this.logger.warn(`settlement pass failed: ${settlementError}`);
+      }
+    }
+
     return {
-      ok: webhookError === null && !("error" in indexer),
+      ok: webhookError === null && !("error" in indexer) && settlementError === null,
       webhooks: { delivered, error: webhookError },
       indexer,
+      settlement,
       durationMs: Date.now() - started,
     };
   }
@@ -130,7 +146,7 @@ export class MaintenanceController {
 }
 
 @Module({
-  imports: [WebhooksModule],
+  imports: [WebhooksModule, SettlementModule],
   controllers: [MaintenanceController],
   providers: [MaintenanceService],
 })

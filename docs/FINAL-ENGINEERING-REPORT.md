@@ -1,7 +1,7 @@
 # Final engineering report
 
-Date: 2026-11-12, updated 2026-11-13 after the frontend/deployment integration
-pass and the residual-risk pass
+Date: 2026-11-12, updated 2026-11-22 after the automatic-settlement, indexer
+replay, backup-verification, CI and contributor-readiness pass
 Repository: `/workspaces/W-Pay`
 Scope: gap closure against the engineering brief, run on the existing W-Pay
 monorepo without rebuilding or replacing working modules.
@@ -18,6 +18,11 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 > `POST /v1/refunds/:id/approve-transaction`. Statements below that say the
 > backend is not hosted, or that an unlinked refund always returns `409`,
 > describe the earlier snapshot.
+>
+> **Latest state (2026-11-22).** Section 8 supersedes earlier test counts,
+> coverage, settlement-worker, indexer-replay and backup statements. The new
+> migration and API code are local only; the hosted deployment has not been
+> migrated or redeployed.
 
 ## 1. What changed
 
@@ -46,6 +51,9 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 | Production deployment assets | `docker-compose.prod.yml` (Postgres, Redis, one-shot migrations, API, indexer, Caddy TLS), `.env.production.example`, `infra/caddy/Caddyfile`, per-app `.env.example` and `vercel.json`; nothing was deployed |
 
 ## 2. Verification results
+
+The rows below are the 2026-11-12/13 checkpoint. Current counts and the new
+checks are in section 8.
 
 | Check | Command | Result |
 | --- | --- | --- |
@@ -162,8 +170,10 @@ occurred.
    Redis are hosted; the indexer/webhook catch-up runs on schedulers); PITR and
    scheduled off-site upload of encrypted backups.
 4. Real-extension Playwright tests covering Freighter rejection/approval.
-5. Automatic settlement worker and a full reconciliation report (operator
-   batch API exists).
+5. Live Testnet settlement execution and reconciliation proof. Automatic
+   prepare/execute orchestration and reconciliation are implemented and tested
+   against Postgres with a fake executor, but no batch has run on Testnet and
+   migration 0008 is not applied to the hosted database.
 6. Cluster deployment, alert delivery, image signing, and measured production
    RTO/RPO (only logical restore time is measured). Remote `CI` and `Security`
    are green.
@@ -223,6 +233,78 @@ Still open or BLOCKED:
   installed); contract sources are unchanged, but rebuild-and-compare is left to
   CI.
 - No independent audit, no mainnet, no real-extension hosted payment, no live
-  batched settlement execution, no automatic settlement worker.
+  batched settlement execution.
 - New documentation: [SETTLEMENT.md](SETTLEMENT.md) and
   [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md).
+
+## 8. Update — 2026-11-22 gap-closing pass
+
+This pass adds functionality and tests on top of the checkout above. It did not
+change contract sources, contract ids or deployed WASM. All results below were
+produced locally; no CI run, migration or deployment of the new code was
+performed.
+
+Implemented:
+
+- **Automatic settlement and reconciliation.** `SETTLEMENT_AUTOMATION=off|
+  prepare|execute`, hold period, capped batch size, atomic payment claims,
+  refund-aware amounts, resumable on-chain execution, exponential backoff,
+  in-app alerts, admin retry and a reconciliation report. Routes:
+  `POST /v1/admin/settlements/run`, `GET .../automation`, `GET
+  .../reconciliation`, `POST .../:id/retry`. Migration
+  `0008_settlement_automation`.
+- **Indexer replay and consistency.** `Indexer.resetCheckpoint`, bounded
+  `Indexer.replay`, `Indexer.consistency`; admin replay endpoint (ADMIN,
+  audit-logged) and consistency endpoint (OPERATOR). Replay is idempotent and
+  bounded by `maxPages`; the report checks checkpoints, staleness, dead letters,
+  unknown event kinds, settled payments without a contract link, paid invoices
+  without a payment, and executed windows without a transaction.
+- **Backups.** Conditional archive TOC validation (`pg_restore --list` when
+  available; the workflow verify job has it, the local run did not), SHA-256
+  sidecars, AES-256 passphrase or GPG public-key encryption, safe retention
+  pruning, full public-table and applied-migration restore comparison, workflow
+  preflight/metadata/checksum/decryption steps.
+- **CI and security gates.** `cargo clippy -D warnings`, ignored Soroban
+  resource benchmark, `prisma validate`, shell syntax, Compose validation,
+  production dependency audit on push/schedule, and backup workflow timeouts.
+- **Settlement executor tests.** Twelve parser/executor tests cover open,
+  partial resume without duplicate entries, close/execute, transaction budget,
+  terminal windows, token/payee/amount mismatches, cancellation, undecodable
+  state and a failed submission classified as retryable.
+- **Contributor readiness.** Bug/feature/contributor-task issue templates, pull
+  request template, and a scoped backlog in
+  [CONTRIBUTOR_ISSUES.md](CONTRIBUTOR_ISSUES.md). No remote issues were created.
+
+Verified locally:
+
+- `pnpm build`: 15/15 tasks.
+- `pnpm typecheck`: 23/23 tasks.
+- `pnpm lint`: 15/15 tasks, 0 errors, 0 warnings.
+- `pnpm test` with Postgres: 263 passed, 2 skipped (api 190, indexer 31, sdk 14,
+  hooks 4, shared 10, e2e 10 + 2 skipped, database 4).
+- API coverage: 88.25% statements, 71.87% branches, 91.36% functions; the
+  settlement executor is 90.42% statements, including resume, budget, mismatch,
+  cancellation and failed-transaction paths. The live Soroban submission path
+  still uses a fake gateway and is not Testnet-verified.
+- `pnpm test:browser`: 9 passed after installing Chromium system dependencies.
+- API and indexer Docker images build and boot; `/v1/health` and indexer
+  `/health` return 200.
+- Backup: encrypted AES-256 round-trip, checksum verification, every-table row
+  counts and 8 applied migrations matched; retention pruning removed only WPay
+  artifacts. Archive TOC validation is configured but was skipped locally
+  because `pg_restore` is not installed; the backup workflow has not run.
+- Workflow YAML parses; `bash -n scripts/*.sh` passes.
+
+Not verified / BLOCKED:
+
+- Rust remains unavailable in this environment. `cargo fmt`, `clippy`, tests,
+  resource benchmarks and WASM rebuild were not run here. The 140-test figure is
+  historical and CI additions have not run on GitHub.
+- No Testnet settlement execution. The automatic suite uses a fake executor and
+  does not prove live signing, RPC parsing or pool funding.
+- The hosted Neon database still has 7 migrations, and the hosted API predates
+  this code. Migration 0008 and a redeploy are required before using the routes.
+- The GitHub `DATABASE_URL` secret is still absent, so scheduled production
+  backups fail closed. A local drill is not a production backup.
+- No external audit, multisig, hardware-wallet custody or real-extension
+  browser payment.

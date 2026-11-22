@@ -17,6 +17,7 @@ import { PaymentsModule } from "./modules/payments";
 import { InvoicesModule } from "./modules/invoices";
 import { OperationsModule } from "./modules/operations";
 import { PlatformModule } from "./modules/platform";
+import { SettlementModule } from "./settlement.controller";
 import { WebhooksModule } from "./webhooks/webhooks.controller";
 import { MaintenanceModule } from "./maintenance";
 
@@ -48,6 +49,7 @@ export class CoreModule {}
     InvoicesModule,
     OperationsModule,
     PlatformModule,
+    SettlementModule,
     WebhooksModule,
     MaintenanceModule,
   ],

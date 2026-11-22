@@ -11,8 +11,12 @@ Vercel projects in the `w-pay` team:
 | `wpay-admin` | `apps/admin-dashboard` | https://wpay-admin.vercel.app |
 
 As of 2026-11-13 the API is live on Vercel with Neon Postgres and Upstash Redis
-marketplace integrations, all seven Prisma migrations applied, and the 16
-Testnet contract ids configured. `GET /v1/health` returns `database: "up"`,
+marketplace integrations, all seven then-existing Prisma migrations applied, and
+the 16 Testnet contract ids configured. The repository now contains
+`0008_settlement_automation`; it is **not** applied to Neon and the API has not
+been redeployed with the automatic settlement, indexer replay or consistency
+routes. Run `pnpm db:migrate` against the unpooled Neon URL before redeploying.
+As of that deployment, `GET /v1/health` returns `database: "up"`,
 `soroban: "up"` and all 16 contracts; `/v1/health/ready` returns `ready: true`;
 `/v1/auth/csrf` sets a `Secure; HttpOnly; SameSite=None` cookie; a login attempt
 for an unknown account returns `401` (a real query against Neon, not a

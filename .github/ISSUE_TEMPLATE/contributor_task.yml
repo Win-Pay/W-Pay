@@ -1,0 +1,77 @@
+name: Contributor task
+description: A scoped, verifiable task from the maintainer backlog
+title: "task: "
+labels: ["contributor task"]
+body:
+  - type: input
+    id: background
+    attributes:
+      label: Background
+      description: Link the relevant code or docs and explain why this matters.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope, and what is explicitly not?
+      placeholder: |
+        In scope:
+        - ...
+        Out of scope:
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Suggested implementation
+      description: Files, functions and constraints. This is guidance, not a fixed prescription.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing
+      description: Exact commands and the failure mode the new test must catch.
+      placeholder: |
+        pnpm typecheck
+        pnpm test
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Likely files
+      description: Paths to start from. Expect adjacent files to be needed.
+  - type: dropdown
+    id: access
+    attributes:
+      label: External access
+      options:
+        - None; fully local
+        - Needs a local Postgres/Redis
+        - Needs Docker
+        - Needs Testnet credentials or funded account
+        - Needs hosted deployment access
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Contributor rules
+      options:
+        - label: I will not fabricate test, deployment or audit evidence.
+          required: true
+        - label: I will not include secrets, real customer data or live keys.
+          required: true
+        - label: I will add regression tests for behavior changes.
+          required: true

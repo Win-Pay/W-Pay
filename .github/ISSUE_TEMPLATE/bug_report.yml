@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible defect without including secrets or real funds data
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include private keys, seed phrases, JWTs, database URLs, customer data or real transaction secrets. Redact addresses and hashes when they identify a private deployment.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal steps, including the environment (local, Compose, Vercel, Testnet).
+      placeholder: |
+        1. Start ...
+        2. Request ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API
+        - Contracts
+        - Indexer
+        - Settlement
+        - Web / merchant / admin
+        - Infrastructure / CI
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Logs, error codes, test output or public Testnet hashes. Never paste secrets or private keys.
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks already run
+      description: Commands and results, if any. Do not claim checks you did not run.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: I removed secrets, credentials and personal data from this report.
+          required: true

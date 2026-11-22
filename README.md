@@ -12,8 +12,12 @@ TypeScript SDK.
 
 > **Deployment status (2026-11-13): backend and frontends hosted, contracts
 > live on Testnet.** The API runs on Vercel at
-> https://wpay-api-six.vercel.app on Neon Postgres and Upstash Redis, with all
-> seven migrations applied and all 16 Testnet contract ids configured.
+> https://wpay-api-six.vercel.app on Neon Postgres and Upstash Redis. Seven
+> migrations were applied at that deployment; the repository now contains an
+> eighth (`0008_settlement_automation`) that must be applied with
+> `prisma migrate deploy` before the automatic settlement endpoints can run in
+> production, and its code has not been redeployed. All 16 Testnet contract ids
+> are configured.
 > `/v1/health` reports `database: "up"`, `soroban: "up"` and every contract;
 > `/v1/health/ready` returns `ready: true`; the three frontends are deployed
 > against that origin and browser-to-API calls were verified from each one.
@@ -97,7 +101,7 @@ GitHub repository secret for the 15-minute catch-up workflow), and the 16
 | Neon project | `neon-citrine-compass` (free tier, `iad1`) |
 | Upstash database | `upstash-kv-indigo-marble` (free tier) |
 | Function region | `iad1`, Node.js 26 runtime, 60 s max duration |
-| Migrations | 7 applied with `prisma migrate deploy` against the unpooled URL |
+| Migrations | 7 applied on the hosted database; 8 in the repository (0008 pending owner deployment) |
 
 Serverless functions are request-scoped, so the 5-second webhook loop and the
 indexer cannot stay resident on Vercel. Instead `vercel.json` schedules a daily
@@ -145,9 +149,10 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | Area | State |
 | --- | --- |
 | 16 Soroban contracts | Implemented in Rust, 140 tests (138 behaviour + 2 resource benchmarks), builds to `wasm32v1-none`; **all 16 deployed to Testnet** |
-| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 167 tests including real Postgres integration |
-| Database (Postgres + Prisma) | Schema, 7 migrations (including refresh-token families and indexer cursor), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with migrations applied |
-| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, health/metrics, payment/refund/escrow/settlement projections — implemented; runs as a 15-minute GitHub Actions + daily Vercel cron catch-up, **not** as a 5-second worker |
+| REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 190 tests including real Postgres integration |
+| Database (Postgres + Prisma) | Schema, 8 migrations (including refresh-token families, indexer cursor and settlement automation), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with 7 migrations applied, 0008 pending |
+| Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, historical replay and consistency reporting, health/metrics, payment/refund/escrow/settlement projections — implemented; runs as a 15-minute GitHub Actions + daily Vercel cron catch-up, **not** as a 5-second worker |
+| Settlement automation | Opt-in `off`/`prepare`/`execute` worker invoked by maintenance: atomic payment claims, refund-aware amounts, hold period, bounded resumable Soroban execution, exponential backoff, in-app alerts, retry endpoint and reconciliation report. Tested against Postgres with a fake executor; not yet run on Testnet |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, merchant branding, transparent fee split, wallet connect/disconnect, signed Soroban payment, progress and receipt with Explorer link; success only after backend verification. A separate `/landing` page presents the product |
 | Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
@@ -197,11 +202,23 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   approval transaction to sign (`409 REFUND_NOT_LINKED` before that).
 - Redis-backed rate limiting is implemented, but deployments without `REDIS_URL`
   fall back to per-process counters and multiply the quota per replica.
+- Automatic settlement is implemented but has not executed a batch on Testnet;
+  the integration suite uses a fake executor. Migration `0008` and the new API
+  code are not deployed to the hosted stack. `SETTLEMENT_AUTOMATION` defaults to
+  `off`, and `execute` additionally requires an operator key with the contract
+  `Operator` role and a funded pool.
 - The daily production backup workflow fails closed because the `DATABASE_URL`
   repository secret is not configured (run 43401586650), so no automatic
   production backup has run yet. The scripted backup/restore drill was verified
-  locally (matching counts, encrypted round-trip); its workflow jobs are skipped
-  while the dump step fails.
+  locally, including GPG AES-256 passphrase encryption, checksum verification,
+  retention pruning and a full-table/migration restore comparison. Archive TOC
+  validation is configured in the drill when `pg_restore` is installed and in
+  the workflow verify job, but this local run used the Docker fallback and did
+  not validate the TOC. The independent `restore-drill` job now runs against an
+  ephemeral migrated/seeded Postgres without `DATABASE_URL`, but the updated
+  workflow has not run on GitHub. Set `DATABASE_URL` and optionally
+  `BACKUP_GPG_PASSPHRASE` (or `BACKUP_GPG_RECIPIENT`) as repository secrets to
+  enable the production dump and verification jobs.
 - No external security audit has occurred. The internal review in
   [docs/AUDIT.md](docs/AUDIT.md) is not an audit.
 
@@ -278,8 +295,10 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
 | TypeScript typecheck | `pnpm typecheck` | 23/23 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL` | 239 passed, 2 skipped (api 167, indexer 30, sdk 14, hooks 4, shared 10, e2e 10, database 4) |
-| API coverage | `pnpm --filter @wpay/api test:coverage` | 88.8% statements, 72.73% branches, 92.02% functions; payments 90.03%, invoices 92.28%, operations 91.81%, auth 89.86%, platform 90.6% |
+| TypeScript tests | `pnpm test` with `DATABASE_URL` | 263 passed, 2 skipped (api 190, indexer 31, sdk 14, hooks 4, shared 10, e2e 10, database 4) |
+| API coverage | `pnpm --filter @wpay/api test:coverage` | 88.25% statements, 71.87% branches, 91.36% functions; the settlement executor is 90.42% statements |
+| Settlement automation | Postgres integration suite, fake executor | claim once, refund aggregation, hold exclusion, success, retry backoff, non-retryable and cancellation paths, reconciliation totals and malformed-window detection |
+| Indexer replay/consistency | Postgres integration suite | replay from an earlier ledger inserted one event, skipped it on rerun, and reported the malformed event plus projection invariant |
 | Browser tests | `pnpm test:browser` | 9 passed: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
@@ -298,13 +317,16 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
-| Backup restore drill | `scripts/db-restore-drill.sh` | source and restored row counts match; encrypted round-trip passed; local restore ~1s |
+| Backup restore drill | `scripts/db-restore-drill.sh` | checksum, all-table row counts and 8 applied migrations match after AES-256 decryption; local restore ~1s. TOC validation was skipped because `pg_restore` is not installed locally; the workflow verify job runs `pg_restore --list` |
+| Backup retention | `BACKUP_RETENTION_DAYS=0 scripts/db-backup.sh` | prune path removed only `wpay-*.dump*` artifacts older than the cutoff |
 | Testnet resources | `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 stroops min resource fee, 1,840-byte assembled envelope |
 
 These results come from the commands above in this repository. The hosted rows
-were run on 2026-11-13 against the live URLs. The on-chain claim is limited to
-the recorded Testnet transactions in [`deployments/`](deployments); no mainnet
-behaviour is claimed.
+were run on 2026-11-13 against the live URLs. Contract/Rust rows are the
+recorded 2026-11-13 evidence and were not re-run in the 2026-11-22 pass because
+no Rust toolchain was installed. The on-chain claim is limited to the recorded
+Testnet transactions in [`deployments/`](deployments); no mainnet behaviour is
+claimed.
 
 ## Security
 
@@ -360,9 +382,11 @@ Do not open public issues for vulnerabilities.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-Run `pnpm typecheck && pnpm test && pnpm contracts:test && pnpm lint` before
-opening a pull request.
+See [CONTRIBUTING.md](CONTRIBUTING.md),
+[docs/CONTRIBUTOR_ISSUES.md](docs/CONTRIBUTOR_ISSUES.md) for scoped tasks, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Run
+`pnpm typecheck && pnpm test && pnpm contracts:test && pnpm lint` before opening
+a pull request.
 
 ## Licence
 

@@ -56,6 +56,25 @@ jobs:
         with:
           fail-on-severity: high
 
+  # dependency-review-action only runs on pull requests, so pushes to main and
+  # the weekly schedule get an explicit lockfile audit instead of a silent skip.
+  dependency-audit:
+    name: Dependency audit (push and schedule)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
   containers:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest

@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose a scoped change with a clear user or operational outcome
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Who is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful implementation. Note alternatives considered.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API
+        - Contracts
+        - Indexer
+        - Settlement
+        - Web / merchant / admin
+        - SDK
+        - Infrastructure / CI
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk
+      description: Money paths, authorization, migrations, event schema changes, deployment impact, or "none identified".
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable outcomes that make the change complete.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing plan
+      description: Tests to add, commands to run, and any external access required (Testnet key, hosted credentials).
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Project constraints
+      options:
+        - label: This proposal does not require inventing deployments, audits or test results.
+          required: true
+        - label: This proposal does not require committing secrets or real customer data.
+          required: true

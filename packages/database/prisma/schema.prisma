@@ -178,15 +178,23 @@ model Payment {
   ledger             Int?
   createdAt          DateTime      @default(now())
   settledAt          DateTime?
+  /// Set when the automatic settlement worker claims this payment for a batch.
+  settlementWindowId String?
+  /// Net amount included in the batch, captured at claim time. Refunds that
+  /// arrive later are reported by reconciliation rather than mutating history.
+  settlementAmount   BigInt?
 
-  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
-  refunds  Refund[]
-  invoice  Invoice?
+  merchant         Merchant          @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  refunds          Refund[]
+  invoice          Invoice?
+  settlementWindow SettlementWindow? @relation(fields: [settlementWindowId], references: [id], onDelete: SetNull)
 
   @@index([merchantId, createdAt])
   @@index([payerAddress, createdAt])
   @@index([contractMerchantId])
   @@index([status])
+  @@index([merchantId, settlementWindowId])
+  @@index([status, settlementWindowId])
 }
 
 model Invoice {
@@ -304,12 +312,25 @@ model SettlementWindow {
   txHash          String?
   createdAt       DateTime         @default(now())
   executedAt      DateTime?
+  /// True for batches created by the automatic settlement worker.
+  auto            Boolean          @default(false)
+  /// Idempotency key for automatic batches; null for operator-created batches.
+  batchKey        String?          @unique
+  attempts        Int              @default(0)
+  lastError       String?
+  lastAttemptAt   DateTime?
+  nextAttemptAt   DateTime?
+  /// Set when a delayed/failed batch has already produced a notification.
+  alertedAt       DateTime?
+  updatedAt       DateTime         @updatedAt
 
-  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  merchant Merchant?         @relation(fields: [merchantId], references: [id], onDelete: SetNull)
   entries  SettlementEntry[]
+  payments Payment[]
 
   @@unique([token, periodStart, periodEnd])
   @@index([status, createdAt])
+  @@index([auto, status, nextAttemptAt])
 }
 
 model SettlementEntry {
@@ -318,7 +339,9 @@ model SettlementEntry {
   merchantId         String?
   payee              String
   amount             BigInt
+  paymentCount       Int      @default(0)
   createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   settlementWindow SettlementWindow @relation(fields: [settlementWindowId], references: [id], onDelete: Cascade)
   merchant         Merchant?        @relation(fields: [merchantId], references: [id], onDelete: SetNull)

@@ -14,15 +14,20 @@ an independent security audit and must not be described as one.
 ## Method
 
 Manual review of entry points and state transitions, `cargo test` (140 tests,
-including two resource benchmarks), TypeScript tests (209 passed, 2 skipped),
-five Playwright tests with a mocked wallet, build/typecheck of every package,
-Prisma schema validation, API coverage (89.4% statements), a real Testnet
-deployment and payment, a Testnet RPC/Horizon resource measurement,
-`cargo audit`, and static checks configured in CI (CodeQL, Trivy, gitleaks,
-dependency review). Locally executed: Gitleaks (no leaks), `pnpm
+including two resource benchmarks), TypeScript tests (263 passed, 2 skipped),
+nine Playwright tests with mocked wallets/API, build/typecheck/lint of every
+package, Prisma schema validation, API coverage (88.25% statements, 71.87%
+branches, 91.36% functions), a real Testnet deployment and payment, a Testnet
+RPC/Horizon resource measurement, `cargo audit`, and static checks configured
+in CI (CodeQL, Trivy, gitleaks, dependency review plus a push/schedule
+production dependency audit). Locally executed: Gitleaks (no leaks), `pnpm
 audit --prod` (no known production advisories), Helm lint/template, kubeconform,
-Prometheus/Alertmanager config checks, and Docker image build. No fuzzing,
-formal verification, external penetration test, or mainnet test was performed.
+Prometheus/Alertmanager config checks, Docker image builds and health smokes,
+and an encrypted backup/restore drill (AES-256, checksum, all tables and
+migrations). No fuzzing, formal verification, external penetration test, or
+mainnet test was performed. New CI additions (clippy `-D warnings`, the ignored
+resource benchmark, Prisma/Compose/shell validation, dependency audit) have not
+yet run on GitHub.
 
 ## Findings
 
@@ -115,6 +120,13 @@ formal verification, external penetration test, or mainnet test was performed.
     `auth.rs`; the API caps batches at 20 entries. The 20-entry benchmark uses
     ~4.2M CPU instructions and carries a large rent component. Re-check the cap
     against current network limits before raising it.
+10a. **Automatic settlement introduces a hot operator key.** `execute` mode signs
+    with `SOROBAN_SOURCE_SECRET` from process env; there is no HSM or multisig.
+    The contract role limits what the key can do, but a stolen operator key can
+    still open and execute windows up to the pool balance, bypassing API limits.
+    Keep automation `off`/`prepare` until a supervised Testnet run and use a
+    dedicated low-balance key, an external signer, and contract-level pause
+    procedures. This control is implemented, not independently audited.
 
 ### Low / informational
 
@@ -130,7 +142,9 @@ formal verification, external penetration test, or mainnet test was performed.
     are templates and will not route real traffic.
 15. **Mobile bundle is large** (~1.27 MB, Stellar SDK). Code-splitting would help;
     not a security issue.
-16. **Dashboard browser coverage is missing.** The Playwright suite covers checkout only; admin and merchant dashboard flows are not browser-tested.
+16. **Dashboard browser coverage is mocked.** Nine Playwright tests cover
+    checkout, merchant dashboard and admin dashboard, but all mock the wallet
+    and API; no real backend or Freighter extension is exercised.
 17. **Rust advisory (transitive).** `cargo audit` reports RUSTSEC-2026-0387
     (timing variability in `crypto-bigint` 0.5.5), reached through
     `soroban-env-host` 29.0.1 → `elliptic-curve` 0.13. The patched 0.7.x line is
@@ -162,12 +176,26 @@ formal verification, external penetration test, or mainnet test was performed.
   answer; storage/Redis dependency failures propagate instead of being reported
   as ready.
 - Indexer projection failures are durable (`IndexerFailure`), retried, surfaced
-  in health/metrics/admin endpoints and never silently dropped. Encrypted
-  database backups and their restore path were verified locally.
+  in health/metrics/admin endpoints and never silently dropped. Replay is
+  bounded, resets a durable checkpoint, and is idempotent; the consistency
+  report checks stale checkpoints, failures and projection invariants.
+- Backups are custom-format dumps; the workflow verify job validates them with
+  `pg_restore --list` (the local drill skipped this because `pg_restore` is not
+  installed and used the Docker fallback). They carry a SHA-256 sidecar and
+  support GPG public-key or AES-256 passphrase encryption; retention pruning only
+  matches WPay artifacts. The restore drill compares all tables and applied
+  migrations. Encrypted round-trip and pruning were verified locally; the
+  workflow has not run because `DATABASE_URL` is missing.
 - Settlement batches are operator-created, require unique payees, reject
   duplicate windows, verify a linked on-chain window's token/period, and cannot
   be cancelled after execution.
-- `prisma validate` passes and the baseline migration matches the schema.
+- Automatic settlement claims eligible payments atomically (no double
+  assignment), respects the hold and refunds, bounds each run, backs off on
+  failure, avoids retrying non-retryable mismatches, releases cancelled windows,
+  and exposes reconciliation totals. It was tested against Postgres with a fake
+  executor, not on Testnet.
+- `prisma validate` passes; the schema is represented by eight ordered
+  migrations, with 0008 not yet applied to the hosted database.
 - `pnpm audit --prod --audit-level=high` reports no known production
   vulnerabilities after the zod 4 upgrade and transitive overrides.
 - `cargo audit` reports one transitive advisory (RUSTSEC-2026-0387) with no

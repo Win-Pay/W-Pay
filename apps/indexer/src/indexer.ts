@@ -39,6 +39,49 @@ export interface ReconcileResult {
   pendingPayments: number;
 }
 
+export interface ReplayResult {
+  contractId: string;
+  fromLedger: number;
+  pages: number;
+  fetched: number;
+  inserted: number;
+  skipped: number;
+  applied: number;
+  failed: number;
+  lastLedger: number;
+  done: boolean;
+}
+
+export interface ConsistencyReport {
+  generatedAt: string;
+  ok: boolean;
+  contracts: {
+    contractId: string;
+    configured: boolean;
+    lastLedger: number | null;
+    cursor: string | null;
+    lagMinutes: number | null;
+    stale: boolean;
+  }[];
+  events: {
+    total: number;
+    byKind: Record<string, number>;
+    oldestLedger: number | null;
+    latestLedger: number | null;
+  };
+  failures: {
+    unresolved: number;
+    oldestUnresolvedAt: string | null;
+    maxAttempts: number;
+  };
+  invariants: {
+    settledWithoutContractLink: number;
+    paidInvoicesWithoutPayment: number;
+    executedWindowsWithoutTx: number;
+    unknownEvents: number;
+  };
+}
+
 /**
  * Ingests Soroban contract events into Postgres.
  *
@@ -301,6 +344,157 @@ export class Indexer {
         limit: this.options.batchSize,
       });
     }
+  }
+
+  /**
+   * Resets a contract's durable cursor to an earlier ledger so the next pass
+   * re-fetches history. Replayed events are deduplicated by the unique
+   * (contractId, txHash, eventIndex) index, so projections are not applied
+   * twice.
+   */
+  async resetCheckpoint(
+    name: ContractName,
+    fromLedger?: number,
+  ): Promise<{ contractId: string; lastLedger: number }> {
+    const contractId = this.options.contracts[name];
+    if (!contractId) throw new Error(`contract ${name} is not configured`);
+    const lastLedger = Math.max(0, Math.floor(fromLedger ?? this.options.startLedger));
+    await this.prisma.indexerCheckpoint.upsert({
+      where: { contractId },
+      create: { contractId, lastLedger, cursor: null },
+      update: { lastLedger, cursor: null },
+    });
+    return { contractId, lastLedger };
+  }
+
+  /**
+   * Historical replay bounded to `maxPages` RPC pages so it fits inside a
+   * serverless request. Call it again to continue from the advanced cursor;
+   * `done` is true once a final partial page has been processed.
+   */
+  async replay(
+    name: ContractName,
+    options: { fromLedger?: number; maxPages?: number } = {},
+  ): Promise<ReplayResult> {
+    const contractId = this.options.contracts[name];
+    if (!contractId) throw new Error(`contract ${name} is not configured`);
+    const reset = await this.resetCheckpoint(name, options.fromLedger);
+    const maxPages = Math.min(Math.max(Math.floor(options.maxPages ?? 10), 1), 100);
+    const totals = { fetched: 0, inserted: 0, skipped: 0, applied: 0, failed: 0 };
+    let pages = 0;
+    let lastLedger = reset.lastLedger;
+    let done = false;
+    while (pages < maxPages) {
+      const result = await this.ingestContract(name, contractId);
+      pages += 1;
+      totals.fetched += result.fetched;
+      totals.inserted += result.inserted;
+      totals.skipped += result.skipped;
+      totals.applied += result.applied;
+      totals.failed += result.failed;
+      lastLedger = result.lastLedger;
+      if (result.fetched < this.options.batchSize) {
+        done = true;
+        break;
+      }
+    }
+    this.log(
+      `${contractId}: replay from ${reset.lastLedger} pages=${pages} fetched=${totals.fetched} inserted=${totals.inserted} skipped=${totals.skipped}`,
+    );
+    return {
+      contractId,
+      fromLedger: reset.lastLedger,
+      pages,
+      ...totals,
+      lastLedger,
+      done,
+    };
+  }
+
+  /**
+   * Compares durable indexer state with the operational projection. This is a
+   * read-only report; it never mutates rows or contacts Soroban.
+   */
+  async consistency(staleAfterMinutes = 30): Promise<ConsistencyReport> {
+    const now = Date.now();
+    const configured = new Map(
+      Object.entries(this.options.contracts).filter(
+        (entry): entry is [string, string] => Boolean(entry[1]),
+      ),
+    );
+    const [checkpoints, byKind, range, failures, attempts, settledWithoutLink, paidWithoutPayment, executedWithoutTx] =
+      await Promise.all([
+        this.prisma.indexerCheckpoint.findMany({ orderBy: { contractId: "asc" } }),
+        this.prisma.indexedEvent.groupBy({ by: ["kind"], _count: { _all: true } }),
+        this.prisma.indexedEvent.aggregate({
+          _count: { _all: true },
+          _min: { ledger: true },
+          _max: { ledger: true },
+        }),
+        this.prisma.indexerFailure.findMany({
+          where: { resolvedAt: null },
+          orderBy: { createdAt: "asc" },
+          select: { createdAt: true, attempts: true },
+        }),
+        this.prisma.indexerFailure.aggregate({
+          where: { resolvedAt: null },
+          _max: { attempts: true },
+        }),
+        this.prisma.payment.count({
+          where: {
+            status: { in: ["SETTLED", "PARTIALLY_REFUNDED", "REFUNDED"] },
+            OR: [{ txHash: null }, { contractPaymentId: null }],
+          },
+        }),
+        this.prisma.invoice.count({ where: { status: "PAID", paymentId: null } }),
+        this.prisma.settlementWindow.count({ where: { status: "EXECUTED", txHash: null } }),
+      ]);
+
+    const unknownEvents = byKind.find((row) => row.kind === "unknown")?._count._all ?? 0;
+    const checkpointById = new Map(checkpoints.map((row) => [row.contractId, row]));
+    const contractIds = new Set([...configured.values(), ...checkpoints.map((row) => row.contractId)]);
+    const contracts = [...contractIds].sort().map((contractId) => {
+      const checkpoint = checkpointById.get(contractId);
+      const lagMinutes = checkpoint
+        ? Math.max(0, Math.floor((now - checkpoint.updatedAt.getTime()) / 60_000))
+        : null;
+      return {
+        contractId,
+        configured: [...configured.values()].includes(contractId),
+        lastLedger: checkpoint?.lastLedger ?? null,
+        cursor: checkpoint?.cursor ?? null,
+        lagMinutes,
+        stale: lagMinutes === null || lagMinutes > staleAfterMinutes,
+      };
+    });
+
+    const invariants = {
+      settledWithoutContractLink: settledWithoutLink,
+      paidInvoicesWithoutPayment: paidWithoutPayment,
+      executedWindowsWithoutTx: executedWithoutTx,
+      unknownEvents,
+    };
+    const stale = contracts.some((entry) => entry.configured && entry.stale);
+    return {
+      generatedAt: new Date(now).toISOString(),
+      ok:
+        !stale &&
+        failures.length === 0 &&
+        Object.values(invariants).every((value) => value === 0),
+      contracts,
+      events: {
+        total: range._count._all,
+        byKind: Object.fromEntries(byKind.map((row) => [row.kind, row._count._all])),
+        oldestLedger: range._min.ledger ?? null,
+        latestLedger: range._max.ledger ?? null,
+      },
+      failures: {
+        unresolved: failures.length,
+        oldestUnresolvedAt: failures[0]?.createdAt.toISOString() ?? null,
+        maxAttempts: attempts._max.attempts ?? 0,
+      },
+      invariants,
+    };
   }
 
   /** Compares indexed totals with the operational ledger for one merchant. */

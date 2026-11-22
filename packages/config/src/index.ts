@@ -120,6 +120,24 @@ export const ServerEnvSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(6),
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
+  /**
+   * Automatic settlement mode. `off` never batches, `prepare` creates durable
+   * batches and intents for an operator, `execute` also signs and submits with
+   * the dedicated SOROBAN_SOURCE_SECRET operator key.
+   */
+  SETTLEMENT_AUTOMATION: z.enum(["off", "prepare", "execute"]).default("off"),
+  /** Only payments settled longer ago than this are batched. */
+  SETTLEMENT_HOLD_HOURS: z.coerce.number().int().min(0).max(720).default(24),
+  /** Maximum payees per automatic window (contract/API cap is 20). */
+  SETTLEMENT_MAX_ENTRIES: z.coerce.number().int().min(1).max(20).default(20),
+  /** On-chain transactions attempted per automatic execution pass. */
+  SETTLEMENT_MAX_STEPS: z.coerce.number().int().min(1).max(20).default(5),
+  /** Base delay between automatic execution retries; doubles per attempt. */
+  SETTLEMENT_RETRY_MINUTES: z.coerce.number().int().min(1).max(1_440).default(30),
+  /** Alert when a batch is still not executed after this many minutes. */
+  SETTLEMENT_DELAY_ALERT_MINUTES: z.coerce.number().int().min(1).max(10_080).default(120),
+  /** Operator address used to prepare intents when no signer secret is set. */
+  SETTLEMENT_OPERATOR_ADDRESS: address.optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   /** Enables the shared rate-limit counters; unset means in-process counters. */
   REDIS_URL: z.string().url().optional(),
@@ -155,6 +173,18 @@ export function parseServerEnv(env: NodeJS.ProcessEnv): {
   for (const candidate of adminAddresses) {
     if (!address.safeParse(candidate).success) {
       throw new Error(`ADMIN_ADDRESSES contains an invalid address: ${candidate}`);
+    }
+  }
+  if (parsed.data.SETTLEMENT_AUTOMATION !== "off") {
+    if (!parsed.data.SOROBAN_SOURCE_SECRET && !parsed.data.SETTLEMENT_OPERATOR_ADDRESS) {
+      throw new Error(
+        "SETTLEMENT_AUTOMATION requires SOROBAN_SOURCE_SECRET or SETTLEMENT_OPERATOR_ADDRESS so intents have an operator",
+      );
+    }
+    if (parsed.data.SETTLEMENT_AUTOMATION === "execute" && !parsed.data.SOROBAN_SOURCE_SECRET) {
+      throw new Error(
+        "SETTLEMENT_AUTOMATION=execute requires a dedicated SOROBAN_SOURCE_SECRET operator signer",
+      );
     }
   }
   return { env: parsed.data, contracts: contractsFromEnv(env), adminAddresses };

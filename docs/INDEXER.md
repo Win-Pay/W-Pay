@@ -19,10 +19,15 @@ STELLAR_RPC_URL        overrides the network default
 overlaps a previous one is skipped. `/health` reports `ok` or `degraded`, the
 last run time, the last error and the number of unresolved projections;
 `/metrics` exposes `wpay_indexer_last_run_timestamp_seconds` and
-`wpay_indexer_unresolved_failures`. The API exposes the same state to operators
-at `GET /v1/admin/indexer/status` and `GET /v1/admin/indexer/failures`, with
-`POST /v1/admin/indexer/failures/:id/resolve` for a reviewed manual resolution
-(audit-logged).
+`wpay_indexer_unresolved_failures`. Operators use:
+
+| Route | Role | Purpose |
+| --- | --- | --- |
+| `GET /v1/admin/indexer/status` | `OPERATOR` | Checkpoints, last run and health |
+| `GET /v1/admin/indexer/failures` | `OPERATOR` | Unresolved and resolved dead letters |
+| `POST /v1/admin/indexer/failures/:id/resolve` | `OPERATOR` | Mark a reviewed failure resolved (audit-logged) |
+| `POST /v1/admin/indexer/replay` | `ADMIN` | Reset a contract checkpoint and replay bounded pages (audit-logged) |
+| `GET /v1/admin/indexer/consistency` | `OPERATOR` | Cross-check checkpoints, failures and projection invariants |
 
 ## Ingestion algorithm
 
@@ -122,12 +127,46 @@ already linked to a different row is rejected.
 ## Replay and recovery
 
 - The checkpoint is per contract in `IndexerCheckpoint` and stores both the last
-  ledger and the RPC cursor. To replay, set `INDEXER_START_LEDGER` to a ledger
-  before the incident and delete/reset the checkpoint row for the contract
-  (clearing the cursor forces ledger mode). Inserts are idempotent and
-  projections converge on the event state.
+  ledger and the RPC cursor. `Indexer.resetCheckpoint(contract, fromLedger)`
+  upserts `lastLedger` and clears the cursor, forcing ledger mode.
+- `Indexer.replay(contract, { fromLedger, maxPages })` resets the checkpoint and
+  calls `ingestContract` until a partial page or the page cap (default 10,
+  hard cap 100; the admin route caps the request at 50). The RPC request stays
+  bounded so the HTTP endpoint fits inside a serverless timeout; call it again
+  to continue from the advanced cursor.
+  `done` is true only after a final partial page. Inserts are idempotent and
+  projections converge on event state.
+- `POST /v1/admin/indexer/replay` exposes the same operation:
+  ```bash
+  curl -s "$API/v1/admin/indexer/replay" -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+    -d '{"contract":"PaymentRouter","fromLedger":123456,"maxPages":10}' | jq
+  ```
+  The route validates that the contract is configured, is audit-logged, and
+  returns `pages`, `fetched`, `inserted`, `skipped`, `applied`, `failed`,
+  `lastLedger` and `done`. Do not reset a checkpoint without a ledger that
+  actually covers the incident; replay is not a substitute for a backup.
 - The database can be rebuilt from a backup and a replay plus off-chain records
   (users, merchant profiles, invoices) that do not exist on-chain.
+
+## Consistency checks
+
+`Indexer.consistency(staleAfterMinutes = 30)` produces a read-only report at
+`GET /v1/admin/indexer/consistency`: event counts by kind and ledger range,
+configured contracts with checkpoint/staleness, unresolved failures and maximum
+attempts, plus projection invariants:
+
+| Counter | Meaning |
+| --- | --- |
+| `settledWithoutContractLink` | A settled payment has no `txHash` or `contractPaymentId` |
+| `paidInvoicesWithoutPayment` | A `PAID` invoice has no linked payment |
+| `executedWindowsWithoutTx` | An `EXECUTED` settlement window has no transaction hash |
+| `unknownEvents` | Events decoded as `kind=unknown` (decoder gap or new contract event) |
+
+`ok` is true only when every configured contract has a fresh checkpoint, there
+are no unresolved failures, and all invariant counters are zero. A nonzero
+counter is an investigation trigger, not proof of lost funds; inspect the event
+or failure row before editing data.
 
 ## Reconciliation
 

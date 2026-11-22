@@ -38,6 +38,23 @@ Production boot is fail-closed: `API_PUBLIC_URL`, `WEB_PUBLIC_URL` and
 contain a template value, and Redis must be configured. The API exits with a
 configuration error instead of starting degraded.
 
+## Settlement automation
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SETTLEMENT_AUTOMATION` | `off` | `off`, `prepare` (create batches) or `execute` (sign and submit) |
+| `SETTLEMENT_HOLD_HOURS` | `24` | Minimum age of a settled payment before automatic batching |
+| `SETTLEMENT_MAX_ENTRIES` | `20` | Payees per automatic batch (max 20) |
+| `SETTLEMENT_MAX_STEPS` | `5` | On-chain transactions attempted per batch per run (max 20) |
+| `SETTLEMENT_RETRY_MINUTES` | `30` | Base retry delay; doubles per failure up to 24 hours |
+| `SETTLEMENT_DELAY_ALERT_MINUTES` | `120` | Age at which an unexecuted batch creates an alert |
+| `SETTLEMENT_OPERATOR_ADDRESS` | empty | Operator address for intents when no signer secret is set |
+
+`prepare`/`execute` require an operator address or `SOROBAN_SOURCE_SECRET`;
+`execute` requires `SOROBAN_SOURCE_SECRET` and the corresponding account must
+hold the contract `Operator` role. Configuration fails at boot rather than
+silently skipping payouts.
+
 ## Contract ids
 
 Each contract has a dedicated variable (`CONTRACT_PAYMENT_ROUTER_ID`, …). Empty

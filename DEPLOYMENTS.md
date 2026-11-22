@@ -15,9 +15,9 @@ record are in [README.md](README.md#live-deployments) and
 | End-to-end payment | **verified on Testnet** | tx `db354f7f…e47d`, ledger 5698164, event + balances checked |
 | API payment confirmation | **verified locally against Testnet** | payment `SETTLED`, `contractPaymentId=1`, fee/net `250000`/`9750000`; see the invoice-memo qualification below |
 | API | **hosted** | <https://wpay-api-six.vercel.app> — `/v1/health` and `/v1/health/ready` 200; Neon and Soroban up; 16/16 contract flags |
-| Postgres | **hosted** | Neon `neon-citrine-compass`, 7 migrations applied |
+| Postgres | **hosted** | Neon `neon-citrine-compass`, 7 migrations applied; repository migration 0008 (settlement automation) is pending |
 | Redis | **hosted** | Upstash `upstash-kv-indigo-marble`, used for rate limits and login lockout |
-| Indexer | **scheduled catch-up** | daily Vercel cron plus 15-minute GitHub Actions run; not a resident worker (see README) |
+| Indexer | **scheduled catch-up** | daily Vercel cron plus 15-minute GitHub Actions run; not a resident worker (see README). Replay/consistency code is local and not redeployed |
 | Checkout UI | **hosted against the API** | <https://wpay-web.vercel.app> |
 | Merchant dashboard | **hosted against the API** | <https://wpay-merchant.vercel.app> |
 | Admin dashboard | **hosted against the API** | <https://wpay-admin.vercel.app> |

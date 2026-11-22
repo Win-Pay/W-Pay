@@ -1,10 +1,14 @@
 # W-Pay engineering report
 
-Date: 2026-11-12
+Date: 2026-11-12; status notes updated 2026-11-22
 Scope: original W-Pay build extending the existing workspace (4 contracts and a
 TS skeleton), rebranded and completed, followed by gap closure. All 16 contracts
 were deployed to Stellar Testnet and an end-to-end Testnet payment was verified.
 No mainnet deployment and no external audit occurred.
+
+> This is a historical build report. Current test counts, the hosted backend,
+> automatic settlement, indexer replay and remaining blockers are in
+> [FINAL-ENGINEERING-REPORT.md](FINAL-ENGINEERING-REPORT.md), sections 7-8.
 
 ## 1. Deliverables
 
@@ -42,6 +46,9 @@ ENVIRONMENT,TESTING,DEPLOYMENT,DISASTER_RECOVERY,THREAT_MODEL,AUDIT}.md`,
 `tests/e2e`.
 
 ## 2. Verified results (commands actually run)
+
+Historical snapshot; current counts are in
+[FINAL-ENGINEERING-REPORT.md](FINAL-ENGINEERING-REPORT.md#8-update--2026-11-22-gap-closing-pass).
 
 | Command | Result |
 | --- | --- |
@@ -92,9 +99,11 @@ closed with a visible config error instead of calling localhost; production
 Compose/Caddy deployment assets and `NEXT_PUBLIC_API_URL` build configuration
 were added.
 
-Partial: mobile/extension are read-only; the hosted frontends still have no
-hosted API; monitoring configs validate but dashboards were not checked against
-a live scrape; browser checkout is covered by Playwright with a mocked provider only.
+Partial: mobile/extension are read-only; the API and three frontends are now
+hosted (Vercel/Neon/Upstash) and verified for health, auth, CORS and
+browser-to-API calls, but no hosted real-wallet payment has run; monitoring
+configs validate but dashboards were not checked against a live scrape; browser
+checkout is covered by Playwright with a mocked provider only.
 
 ## 4. Security findings
 
@@ -146,21 +155,26 @@ and WASM hashes in `DEPLOYMENTS.md`), and payment 1 settled through
 API confirmed the transaction into Postgres (`SETTLED`, `contractPaymentId=1`)
 and rejected a bogus hash and a mismatched amount.
 
-**Backend: not hosted.** API, Postgres and indexer run locally/compose only.
-The API container builds and passes a health smoke test. The three Vercel
-frontends (checkout <https://wpay-web.vercel.app>, merchant
-<https://wpay-merchant.vercel.app>, admin <https://wpay-admin.vercel.app>) are
-static hosting and cannot process payments until the backend is hosted.
-
-`DEPLOYMENTS.md` records the deployment precisely. No mainnet deployment and no
-external audit exists.
+**Backend: hosted (updated 2026-11-13).** The API runs on Vercel with Neon
+Postgres and Upstash Redis; the three frontends call
+<https://wpay-api-six.vercel.app>. Webhook delivery and indexing are caught up by
+a Vercel daily cron plus a 15-minute GitHub Actions job rather than resident
+workers. Seven migrations were applied at deployment; the repository now has an
+eighth settlement-automation migration that is not yet applied, and the
+settlement/replay code is not redeployed. See the later sections of
+[FINAL-ENGINEERING-REPORT.md](FINAL-ENGINEERING-REPORT.md). No mainnet deployment
+and no external audit exists.
 
 ## 6. Remaining gaps
 
 1. Independent audit before mainnet; multisig/timelock key ceremony.
-2. Hosted API/indexer/Postgres and pointing the Vercel dashboards at them.
-3. Playwright browser E2E against the real Freighter extension (mocked checkout flow exists).
-4. PITR and scheduled off-site upload (logical dump, optional encryption and restore drill are automated).
-5. Settlement batch worker and full reconciliation report.
-6. Remote CI is green, but cluster deployment, alert delivery, image signing
-   and production RTO/RPO remain unexercised.
+2. Apply migration 0008 and redeploy the hosted API before using automatic
+   settlement/replay; configure the GitHub backup database secret.
+3. Playwright browser E2E against the real Freighter extension (mocked flows exist).
+4. PITR and scheduled off-site upload (checksummed/encrypted logical dumps and a
+   restore drill are automated).
+5. Live Testnet settlement execution and reconciliation proof (automatic
+   orchestration is implemented and tested with a fake executor).
+6. Remote CI is green at the last recorded commit, but the new CI gates have not
+   run remotely; cluster deployment, alert delivery, image signing and
+   production RTO/RPO remain unexercised.

@@ -208,6 +208,53 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
     });
   });
 
+  describe("operator observability", () => {
+    it("returns the indexer consistency report", async () => {
+      const response = await json<{
+        ok: boolean;
+        contracts: unknown[];
+        events: { total: number };
+        invariants: Record<string, unknown>;
+      }>(harness.baseUrl, "/admin/indexer/consistency", { token: adminToken });
+      expect(response.status).toBe(200);
+      expect(typeof response.body.ok).toBe("boolean");
+      expect(Array.isArray(response.body.contracts)).toBe(true);
+      expect(response.body.events.total).toBeGreaterThanOrEqual(0);
+      expect(response.body.invariants).toHaveProperty("settledWithoutContractLink");
+    });
+
+    it("refuses to replay a contract that is not configured", async () => {
+      const response = await json<{ message: string }>(harness.baseUrl, "/admin/indexer/replay", {
+        method: "POST",
+        token: adminToken,
+        body: { contract: "paymentRouter", maxPages: 1 },
+      });
+      expect(response.status).toBe(400);
+      expect(response.body.message).toContain("not configured");
+    });
+
+    it("returns a settlement automation summary", async () => {
+      const response = await json<{ mode: string; skipped: string }>(
+        harness.baseUrl,
+        "/admin/settlements/run",
+        { method: "POST", token: adminToken, body: {} },
+      );
+      expect(response.status).toBe(201);
+      expect(response.body.mode).toBe("off");
+      expect(response.body.skipped).toBe("automation_disabled");
+    });
+
+    it("tolerates a non-numeric automation limit", async () => {
+      const response = await json<{ items: unknown[] }>(
+        harness.baseUrl,
+        "/admin/settlements/automation?limit=not-a-number",
+        { token: adminToken },
+      );
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body.items)).toBe(true);
+    });
+  });
+
   describe("authentication", () => {
     it("rejects a duplicate registration", async () => {
       const response = await json(harness.baseUrl, "/auth/register", {

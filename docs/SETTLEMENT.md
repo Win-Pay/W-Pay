@@ -66,12 +66,64 @@ Funding the pool is deliberately not an API route. Use `fundSettlementPool` from
 `@wpay/sdk` or the Stellar CLI to call `SettlementManager.fund(from, token,
 amount)`. Funding is permissionless; it cannot remove funds or change a window.
 
-### Why there is no automatic payout worker
+## Automatic settlement worker
 
-The API exposes intents, not signing keys. Automatic execution would require a
-custodial settlement signer and a scheduler, neither of which is enabled. The
-roadmap item remains open. Any statement that batches execute "automatically"
-would be false; execution is an explicit operator action.
+`SettlementAutomationService` (`apps/api/src/settlement.service.ts`) closes the
+manual-batching gap without weakening the operator intent flow. It is invoked by
+`GET /v1/internal/maintenance` after the indexer pass, so the same cron/worker
+that catches up events also prepares and executes due batches.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SETTLEMENT_AUTOMATION` | `off` | `off`, `prepare` (create batches only) or `execute` (also drive them on chain) |
+| `SETTLEMENT_HOLD_HOURS` | `24` | Minimum age of a settled payment before it can be claimed |
+| `SETTLEMENT_MAX_ENTRIES` | `20` | Payees per automatic batch (hard API/contract cap is 20/50) |
+| `SETTLEMENT_MAX_STEPS` | `5` | Soroban transactions per batch per worker run |
+| `SETTLEMENT_RETRY_MINUTES` | `30` | Base retry delay; doubles per failed attempt up to 24 hours |
+| `SETTLEMENT_DELAY_ALERT_MINUTES` | `120` | Age after which an unexecuted batch raises an in-app alert |
+| `SETTLEMENT_OPERATOR_ADDRESS` | derived from `SOROBAN_SOURCE_SECRET` | Operator account that must hold the Operator role |
+
+`execute` mode refuses to boot without `SOROBAN_SOURCE_SECRET`; `prepare` and
+`execute` both refuse to boot without an operator address. Production config
+therefore fails closed instead of silently skipping payouts.
+
+Safety properties:
+
+- **Atomic claim.** Eligible payments (`SETTLED`, `PARTIALLY_REFUNDED`,
+  `REFUNDED`, older than the hold, `net > 0`, not yet assigned) receive
+  `settlementWindowId` and `settlementAmount` in the same transaction that
+  creates the batch. A payment can never belong to two batches. A lost worker
+  rolls back the batch instead of leaving a partial claim.
+- **Refund-aware amounts.** The claimed amount is `net - refunded` at claim
+  time. Later refunds are reported by reconciliation rather than rewriting
+  settlement history.
+- **Bounded and resumable.** `SorobanSettlementExecutor` reads the contract
+  window before every mutation, adds only missing entries, closes and executes
+  within `SETTLEMENT_MAX_STEPS` transactions. A crash between transactions
+  resumes from on-chain state; it cannot duplicate an entry or a payout.
+- **No guessing.** A token, payee, amount, or status mismatch between the local
+  batch and the contract window is a non-retryable failure that requires an
+  operator.
+- **Backoff and alerts.** Failures store `lastError`, increment `attempts`,
+  schedule exponential `nextAttemptAt`, and create one notification per batch.
+  An operator can clear the backoff with `POST /v1/admin/settlements/:id/retry`.
+- **Cancellation release.** Payments in a `CANCELLED` window are released and
+  become eligible for a later batch.
+
+Automation routes:
+
+| Route | Role | Purpose |
+| --- | --- | --- |
+| `POST /v1/admin/settlements/run` | `OPERATOR` | Run prepare; body `{"execute":true}` requires `ADMIN` and execute mode |
+| `GET /v1/admin/settlements/automation` | `OPERATOR` | Recent automatic batches, attempts, errors and next retry |
+| `GET /v1/admin/settlements/reconciliation` | `OPERATOR` (scoped for merchants) | Payable/allocated totals, treasury fees, window status and invariant counters |
+| `POST /v1/admin/settlements/:id/retry` | `ADMIN` | Clear a batch's backoff after investigation |
+
+The manual operator flow above remains available and is still required when
+automation is `off`, when a batch is non-retryably blocked, or when an operator
+wants to re-check the intent before signing. Automatic execution signs with the
+dedicated operator key; it never holds merchant funds and `SettlementManager`
+still enforces the role, pause and pool checks.
 
 ## Indexer projection
 
@@ -119,24 +171,38 @@ with the chain.
    ```
    `status: "stale"` means no checkpoint has advanced for 30 minutes. Unresolved
    failures include the stored projection and the contract/tx/index tuple.
-4. **Replay if needed.** Stop the indexer, set `INDEXER_START_LEDGER` before the
-   affected ledger, clear the contract's checkpoint cursor, and restart. Inserts
-   are idempotent and terminal projections do not regress. See
-   [INDEXER.md](INDEXER.md#replay-and-recovery).
+4. **Replay if needed.** Use `POST /v1/admin/indexer/replay` as an `ADMIN`
+   with `{"contract":"SettlementManager","fromLedger":<ledger>}`. The endpoint
+   resets the checkpoint, replays bounded pages, and re-applies idempotent
+   projections; terminal states do not regress. This avoids manual database
+   edits and is audit-logged. See [INDEXER.md](INDEXER.md#replay-and-recovery).
+   `GET /v1/admin/indexer/consistency` reports stale checkpoints, unresolved
+   failures, unknown event kinds, settled payments without a contract link,
+   paid invoices without a payment, and executed windows without a transaction.
 5. **Resolve or escalate failures.** `POST /v1/admin/indexer/failures/:id/resolve`
    marks a reviewed failure as resolved and is audit-logged. Do not resolve a
    failure merely to clear the count; record why the projection cannot apply.
-6. **Confirm the pool before execution.** `execute` reverts when the pool is
+6. **Inspect automation state.** `GET /v1/admin/settlements/automation` shows
+   automatic batches, attempts, last error and next retry. `attempts` with no
+   progress after backoff indicates a persistent problem, not a transient one.
+7. **Confirm the pool before execution.** `execute` reverts when the pool is
    short. Check `SettlementManager.pool(token)` against the window total before
    asking an operator to sign.
 
 ## What is verified
 
-- Contract state transitions and authorization are covered by Rust unit tests
-  (`cargo test`, when the Rust toolchain is available).
+- Contract state transitions and authorization are covered by Rust unit tests;
+  CI runs `cargo test` plus the ignored local resource benchmark. They have not
+  been re-run in this workspace because no Rust toolchain is installed here.
 - API creation, linking, intent construction and authorization are covered by
   the Postgres integration suite (`apps/api/src/postgres.integration.test.ts`).
-- Indexer projection and terminal-state protection are covered by
+- Automatic claiming, refund aggregation, hold exclusion, success, failure
+  backoff, non-retryable handling, cancellation release and reconciliation
+  totals are covered by `apps/api/src/settlement.integration.test.ts` against
+  Postgres, using a fake `SettlementExecutor`. This verifies orchestration and
+  database concurrency, not a live Soroban signature.
+- Indexer projection, terminal-state protection, checkpoint replay and the
+  consistency report are covered by
   `apps/indexer/src/indexer.integration.test.ts`.
 - The merchant dashboard lists settlement batches from the API
   (`apps/merchant-dashboard`), covered by a mocked browser test.
@@ -145,9 +211,13 @@ with the chain.
 
 - No settlement window has been executed against Testnet in this repository's
   recorded evidence. The recorded end-to-end payment covers `PaymentRouter`
-  settlement, not a batched `SettlementManager.execute`.
-- There is no scheduled settlement worker and no automatic reconciliation job;
-  the runbook above is manual.
+  settlement, not a batched `SettlementManager.execute`, and the automated test
+  executor is a fake rather than a Testnet signer.
+- `SorobanSettlementExecutor`'s RPC parsing and transaction submission are not
+  covered by an integration test; they require Testnet credentials and a funded
+  operator/pool. Production automation therefore remains unproven until the
+  owner runs one supervised batch on Testnet.
+- Automatic notifications are in-app rows; no email or pager delivery is wired.
 - No load or resource test has been run for a 20-entry `execute` on the live
   network. The local test-host measurement is in
   [TESTING.md](TESTING.md#soroban-resource-measurements); network cost may differ.

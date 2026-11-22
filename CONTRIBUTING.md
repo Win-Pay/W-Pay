@@ -47,7 +47,16 @@ Contract changes are high risk. Include:
 3. the event changes and indexer impact;
 4. an upgrade plan (wasm hash, delay, rollback).
 
+## Where to start
+
+Scoped tasks with background, files, acceptance criteria and testing commands
+are in [docs/CONTRIBUTOR_ISSUES.md](docs/CONTRIBUTOR_ISSUES.md). Open a
+contributor-task issue before starting so the scope is visible; do not create
+labels, approvals or deployment evidence that do not exist.
+
 ## Review
 
-Two approvals are required for contract, payment-flow and infrastructure
-changes. Security-relevant changes should reference the threat model.
+Two approvals are expected for contract, payment-flow and infrastructure
+changes through branch protection where configured. Security-relevant changes
+should reference the threat model. A single-maintainer checkout may not enforce
+this automatically; the pull request must state what was actually reviewed.
