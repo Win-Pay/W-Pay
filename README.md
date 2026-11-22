@@ -342,7 +342,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
-| GitHub Actions | CI + Security workflows | green on `b9bdba4` (CI 45067193267, Security 45067193233); 11/11 checks completed, none skipped |
+| GitHub Actions | CI + Security workflows | green on `89aa100` (CI 45074675192, Security 45074675203); 11/11 checks completed, none skipped |
 | GitHub governance | branch protection, environment rules, scoped issues | BLOCKED for protection/secrets: the current token gets `403` for branch protection and environment secret names; `production` has no protection rules. Issues #1–#3 are filed; exact owner runbook in [docs/GITHUB_GOVERNANCE.md](docs/GITHUB_GOVERNANCE.md) |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |

@@ -30,8 +30,8 @@ real invoice payment, two settlement windows and an automatic settlement window
 through the API worker, with contract events and balance deltas verified. No
 fuzzing, formal verification, external penetration test, or mainnet test was
 performed. The CI additions (clippy `-D warnings`, the resource benchmarks,
-Prisma/Compose/shell validation, dependency audit) passed in CI run 45067193267
-on commit `b9bdba4` (2026-11-22).
+Prisma/Compose/shell validation, dependency audit) passed in CI run 45074675192
+on commit `89aa100` (2026-11-22).
 
 ## Findings
 
@@ -227,7 +227,7 @@ review. Nothing here may be quoted as an audit result.
 
 ### Scope and artifacts
 
-- Source: this repository at commit `b9bdba4` (or the commit that adds this
+- Source: this repository at commit `89aa100` (or the commit that adds this
   section). Contract workspace: `packages/contracts`.
 - Contracts in scope: 16 Soroban contracts plus `wpay-common`. The original
   Testnet deployment ids, upload/create transactions and WASM hashes are in
@@ -346,7 +346,7 @@ mechanism. Do not describe this as a complete upgrade system.
   to the hosted database.
 - Backup: encrypted local restore drill matched 21 public tables and eight
   migrations; no production backup exists.
-- CI: run 45067193267 (CI) and 45067193233 (Security) are green on `b9bdba4`.
+- CI: run 45074675192 (CI) and 45074675203 (Security) are green on `89aa100`.
 - Dependency audit: no known production advisories (`pnpm audit`); one
   transitive Rust advisory, RUSTSEC-2026-0387, with no compatible fix in the
   current Soroban SDK (see finding 17).

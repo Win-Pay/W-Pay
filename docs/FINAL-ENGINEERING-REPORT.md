@@ -304,8 +304,8 @@ Verified locally:
   warnings`, `cargo test` (140 passed, including both resource benchmarks) and
   the 16-contract WASM build all pass.
 - Workflow YAML parses; `bash -n scripts/*.sh` passes.
-- GitHub Actions on `b9bdba4` (2026-11-22): CI run 45067193267 and Security run
-  45067193233 both succeeded; all 11 check runs completed and none was skipped.
+- GitHub Actions on `89aa100` (2026-11-22): CI run 45074675192 and Security run
+  45074675203 both succeeded; all 11 check runs completed and none was skipped.
   Dependency review is PR-only and will run on the next pull request.
 
 Not verified / BLOCKED:
@@ -372,7 +372,7 @@ workspace (credentials, permissions, an external party or hardware).
 | Indexer/backend reliability | **PARTIAL** | Durable checkpoints/cursors, live catch-up, replay, dead-letter review, duplicate protection and stable second pass verified. No multi-hour outage test, no resident worker, no RPC failover; hosted indexer is a periodic maintenance call |
 | Admin/contract security | **PARTIAL** | RBAC, roles, pause, treasury timelock, upgrade delay, audit logging, rate limits and replay protection implemented and tested. Multisig, hardware wallet, external timelock and independent audit are **not** configured/verified; UpgradeManager only self-upgrades |
 | Production deployment | **PARTIAL** | API `/v1/health` and `/v1/health/ready` 200 with DB/Soroban up and 16/16 contracts; three frontends 200. Hosted API is stale (`/v1/admin/settlements/automation` 404), migration 0008 absent, `winpay.com` DNS still wrong |
-| GitHub governance | **BLOCKED** | CI/Security green on `b9bdba4`; workflows/templates exist; issues [#1](https://github.com/Win-Pay/W-Pay/issues/1), [#2](https://github.com/Win-Pay/W-Pay/issues/2) and [#3](https://github.com/Win-Pay/W-Pay/issues/3) filed. Branch protection and environment secret names return `403` with the current token; `production` has no protection rules. Owner runbook: [GITHUB_GOVERNANCE.md](GITHUB_GOVERNANCE.md) |
+| GitHub governance | **BLOCKED** | CI/Security green on `89aa100` (CI 45074675192, Security 45074675203); workflows/templates exist; issues [#1](https://github.com/Win-Pay/W-Pay/issues/1), [#2](https://github.com/Win-Pay/W-Pay/issues/2) and [#3](https://github.com/Win-Pay/W-Pay/issues/3) filed. Branch protection and environment secret names return `403` with the current token; `production` has no protection rules. Owner runbook: [GITHUB_GOVERNANCE.md](GITHUB_GOVERNANCE.md) |
 | Contributor readiness | **PARTIAL** | Issue/PR templates, contribution docs, a scoped backlog and three genuine remote issues now exist; tests and CI are strong. Branch protection/secrets and signed-commit enforcement remain blocked with the current token |
 | Independent audit | **BLOCKED** | An audit hand-off package is prepared in [AUDIT.md](AUDIT.md#independent-soroban-audit-package): scope, privileged entry points, trust assumptions, tests, risks and remediation backlog. No auditor has been engaged and no report exists |
 

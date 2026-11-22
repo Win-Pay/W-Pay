@@ -309,8 +309,8 @@ keyless OIDC, then verifies signatures before Helm upgrade.
 - Long-running incident drills and chaos scenarios; backup/restore and encrypted
   backup round-trips are automated, but failover RTO/RPO is not measured.
 
-The latest recorded remote green run is commit `b9bdba4` (2026-11-22): CI run
-45067193267 and Security run 45067193233 succeeded, including the Soroban
+The latest recorded remote green run is code commit `89aa100` (2026-11-22):
+CI run 45074675192 and Security run 45074675203 succeeded, including the Soroban
 `clippy -D warnings` gate, 140 Rust tests, both resource benchmarks, the WASM
 build, TypeScript workspace, browser wallet flow, indexer/API container builds,
 k6 load test, CodeQL, Trivy, Gitleaks and the dependency audit. All 11 check runs

@@ -68,7 +68,7 @@ not fully exercised; **open** = not implemented.
 | Soroban resource benchmarks | done | two `WPAY_BENCH` tests plus `pnpm measure:testnet` (RPC simulation and recorded transaction fees/sizes) |
 | Enforceable dependency checks | done | `pnpm audit --prod --audit-level=high` in CI; lockfile; transitive overrides |
 | Pin Docker digests and package-manager versions | done | base images and CI services pinned by digest; `packageManager` pinned in `package.json` |
-| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally and in CI; CodeQL, Trivy and dependency review are configured in the security workflows; cosign signing is in `deploy.yml`. `CI` 45067193267 and `Security` 45067193233 succeeded on commit `b9bdba4` (2026-11-22). Dependency review is PR-only (`.github/workflows/dependency-review.yml`) and image signing was not exercised |
+| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally and in CI; CodeQL, Trivy and dependency review are configured in the security workflows; cosign signing is in `deploy.yml`. `CI` 45074675192 and `Security` 45074675203 succeeded on commit `89aa100` (2026-11-22). Dependency review is PR-only (`.github/workflows/dependency-review.yml`) and image signing was not exercised |
 | Prepare contracts for independent audit | **partial** | tests, docs, recorded deployments and a hand-off package (scope, privileged entry points, trust assumptions, risks, remediation) exist in [AUDIT.md](AUDIT.md#independent-soroban-audit-package); no independent audit has occurred |
 | Never claim an external audit | done | README, SECURITY, AUDIT and the final report state that none occurred |
 
@@ -109,5 +109,5 @@ not fully exercised; **open** = not implemented.
 2. Add the `DATABASE_URL` repository secret so the scheduled production backup and restore verification run; scheduled off-site upload of encrypted backups and PITR are still missing.
 3. Real-extension Playwright tests; current browser tests mock Freighter.
 4. Settlement batch worker and reconciliation report.
-5. Cluster deployment, alert delivery, image signing, and measured production RTO/RPO (only logical restore time is measured). Remote `CI` 45067193267 and `Security` 45067193233 are green on commit `b9bdba4`; the `deploy.yml` workflow has never run.
+5. Cluster deployment, alert delivery, image signing, and measured production RTO/RPO (only logical restore time is measured). Remote `CI` 45074675192 and `Security` 45074675203 are green on commit `89aa100`; the `deploy.yml` workflow has never run.
 6. Mainnet deployment. None has occurred.
