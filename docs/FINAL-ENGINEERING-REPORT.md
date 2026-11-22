@@ -297,11 +297,12 @@ Verified locally:
   warnings`, `cargo test` (140 passed, including both resource benchmarks) and
   the 16-contract WASM build all pass.
 - Workflow YAML parses; `bash -n scripts/*.sh` passes.
+- GitHub Actions on `575012f` (2026-11-22): CI run 45066533798 and Security run
+  45066533736 both succeeded; all 11 check runs completed and none was skipped.
+  Dependency review is PR-only and will run on the next pull request.
 
 Not verified / BLOCKED:
 
-- The GitHub CI and Security reruns for the clippy/workflow fixes have not been
-  observed yet.
 - No Testnet settlement execution. The automatic suite uses a fake executor and
   does not prove live signing, RPC parsing or pool funding.
 - The hosted Neon database still has 7 migrations, and the hosted API predates

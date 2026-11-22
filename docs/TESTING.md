@@ -261,11 +261,13 @@ keyless OIDC, then verifies signatures before Helm upgrade.
 - Long-running incident drills and chaos scenarios; backup/restore and encrypted
   backup round-trips are automated, but failover RTO/RPO is not measured.
 
-The latest recorded remote green run is commit `aea4376` (2026-11-13) for both
-`CI` and `Security`: Soroban contracts, TypeScript workspace, Rust dependency
-audit, browser wallet flow, indexer/API container builds, k6 load test, CodeQL,
-Trivy and Gitleaks. The workflows in this checkout add `cargo clippy -D
-warnings`, the ignored resource benchmark, Prisma/Compose/shell validation, and
-a push/schedule production dependency audit; those additions have not yet run
-on GitHub. Dependency review remains pull-request-only. Image signing runs in
+The latest recorded remote green run is commit `575012f` (2026-11-22): CI run
+45066533798 and Security run 45066533736 succeeded, including the Soroban
+`clippy -D warnings` gate, 140 Rust tests, both resource benchmarks, the WASM
+build, TypeScript workspace, browser wallet flow, indexer/API container builds,
+k6 load test, CodeQL, Trivy, Gitleaks and the dependency audit. All 11 check runs
+completed and none was skipped on push. Dependency review now lives in
+`.github/workflows/dependency-review.yml`, runs only on pull requests (the
+correct trigger for `actions/dependency-review-action`) and will be exercised by
+the next PR rather than appearing as a skipped push check. Image signing runs in
 the deploy workflow and was not executed.

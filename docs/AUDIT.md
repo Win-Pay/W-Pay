@@ -25,9 +25,9 @@ audit --prod` (no known production advisories), Helm lint/template, kubeconform,
 Prometheus/Alertmanager config checks, Docker image builds and health smokes,
 and an encrypted backup/restore drill (AES-256, checksum, all tables and
 migrations). No fuzzing, formal verification, external penetration test, or
-mainnet test was performed. New CI additions (clippy `-D warnings`, the ignored
-resource benchmark, Prisma/Compose/shell validation, dependency audit) have not
-yet run on GitHub.
+mainnet test was performed. The CI additions (clippy `-D warnings`, the resource
+benchmarks, Prisma/Compose/shell validation, dependency audit) passed in CI run
+45066533798 on commit `575012f` (2026-11-22).
 
 ## Findings
 
