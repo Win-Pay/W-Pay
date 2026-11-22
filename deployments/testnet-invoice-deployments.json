@@ -1,0 +1,43 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "deployedAt": "2026-11-22T21:20:53.909Z",
+  "deployer": "GCNI62OIMAEADUTRCMPSP3PNO2W4ORZ6HAJUWQYF6ZUPRUXFXZ42CRV4",
+  "contracts": {
+    "paymentRouter": {
+      "contractId": "CCH5OCHWK7FMVMAZKVTHORNVSWOBXJX5RM5U7KSBYQFG2AOTGXGL5NHM",
+      "wasmSha256": "26028f4f5363f978883954e9c3c0bc7577158eb56a00941f0f41f19b1cb11412",
+      "uploadTxHash": "04ac49029632be9ae3707d9c9dfbc4eaff77f74a160da874e84a2d2ee575e3f6",
+      "createTxHash": "eca2c706ec62b04ed562e8a3081fdb913d34d0a08ea5e7f65a4047b5ba4e329d",
+      "deployedAt": "2026-11-22T21:21:03.216Z"
+    },
+    "invoiceManager": {
+      "contractId": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV",
+      "wasmSha256": "85e636ca08b27470eca815696086daa954115401d9e2b345b0d74b2e9acf4cf3",
+      "uploadTxHash": "1dc891c90d1548b3cbb72f48ba2efcbd873adcbfa8e652879471696f99c07d10",
+      "createTxHash": "1772fb82e947265d84c24f416e5f91b45e41be407cdd946f25cd98a8e764390d",
+      "deployedAt": "2026-11-22T21:21:13.616Z"
+    },
+    "settlementManager": {
+      "contractId": "CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J",
+      "wasmSha256": "a4900184f94ae5bad709f68f72cfcda82dea70212ecfb74526aa28392f5e604a",
+      "uploadTxHash": "9011b93cf98ce43afc970fd94ad3e65a96755e93ecb56798b682639dd2b46828",
+      "createTxHash": "a3bc825c6cee71873cbc69ab5553a6ff1a530f13f59e07818af3d3ecfb029435",
+      "deployedAt": "2026-11-22T21:21:22.417Z"
+    },
+    "merchantRegistry": {
+      "contractId": "CBPJKD3YEXZXSFGWGC77N3FNB2VDNIDXDVKCQJA54H7MQQ5HU5OEHXDI",
+      "wasmSha256": "1be2be1cd4e59993bb1be2d41806a414699f619c981e1fb9647311ac8ca3f8da",
+      "uploadTxHash": "75e497413683ebad1727734059fc5ea5e15e1230f3dff62c7b4b7e7041b5d5a8",
+      "createTxHash": "2d6f18fdf51ae4c5246ae470ad3d9b348df80c27e37a580d9ab121ed91b1c4ab",
+      "deployedAt": "2026-11-22T21:21:32.960Z"
+    },
+    "feeManager": {
+      "contractId": "CCNSHK7VXUK6646HMWFOPY7K3TEAHH6DSNTY2Z2KAHGBY4LZ76MODY7Y",
+      "wasmSha256": "f48e82e992663198e4e24101ac93fcfc072b6dd09b16de48bc119bfe4bc1aca8",
+      "uploadTxHash": "97751e1818b536d826659e66b2c3f4ba94a268b37c7dd5d5ea5058056b4f4083",
+      "createTxHash": "3947701ea2d5860e984af73b016a5b8a68785a7704753e3447b1bd02a9063337",
+      "deployedAt": "2026-11-22T21:21:43.324Z"
+    }
+  }
+}

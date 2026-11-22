@@ -173,8 +173,12 @@ and no external audit exists.
 3. Playwright browser E2E against the real Freighter extension (mocked flows exist).
 4. PITR and scheduled off-site upload (checksummed/encrypted logical dumps and a
    restore drill are automated).
-5. Live Testnet settlement execution and reconciliation proof (automatic
-   orchestration is implemented and tested with a fake executor).
+5. Live Testnet settlement execution and reconciliation proof. Automatic
+   orchestration was exercised on 2026-11-22: a supervised local API created and
+   executed window `4` with four `SUCCESS` transactions, and a stable second pass
+   created no duplicate. Evidence is in
+   [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md). The hosted API and
+   migration 0008 are still not deployed.
 6. Remote CI is green at the last recorded commit, but the new CI gates have not
    run remotely; cluster deployment, alert delivery, image signing and
    production RTO/RPO remain unexercised.

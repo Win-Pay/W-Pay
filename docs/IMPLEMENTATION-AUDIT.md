@@ -68,8 +68,8 @@ not fully exercised; **open** = not implemented.
 | Soroban resource benchmarks | done | two `WPAY_BENCH` tests plus `pnpm measure:testnet` (RPC simulation and recorded transaction fees/sizes) |
 | Enforceable dependency checks | done | `pnpm audit --prod --audit-level=high` in CI; lockfile; transitive overrides |
 | Pin Docker digests and package-manager versions | done | base images and CI services pinned by digest; `packageManager` pinned in `package.json` |
-| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally and in CI; CodeQL, Trivy and dependency review are configured in the security workflows; cosign signing is in `deploy.yml`. `CI` 45066533798 and `Security` 45066533736 succeeded on commit `575012f` (2026-11-22). Dependency review is PR-only (`.github/workflows/dependency-review.yml`) and image signing was not exercised |
-| Prepare contracts for independent audit | **partial** | tests, docs and recorded deployment exist; no independent audit has occurred |
+| Gitleaks/CodeQL/Trivy/image signing | done/partial | Gitleaks CLI (pinned 8.30.1) runs clean locally and in CI; CodeQL, Trivy and dependency review are configured in the security workflows; cosign signing is in `deploy.yml`. `CI` 45067193267 and `Security` 45067193233 succeeded on commit `b9bdba4` (2026-11-22). Dependency review is PR-only (`.github/workflows/dependency-review.yml`) and image signing was not exercised |
+| Prepare contracts for independent audit | **partial** | tests, docs, recorded deployments and a hand-off package (scope, privileged entry points, trust assumptions, risks, remediation) exist in [AUDIT.md](AUDIT.md#independent-soroban-audit-package); no independent audit has occurred |
 | Never claim an external audit | done | README, SECURITY, AUDIT and the final report state that none occurred |
 
 ## Infrastructure
@@ -77,7 +77,7 @@ not fully exercised; **open** = not implemented.
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | k6 wired into CI | done | `loadtest/wpay.k6.js` and the `loadtest` job in `.github/workflows/ci.yml` |
-| PostgreSQL backup workflow and restore drill | done/partial | `.github/workflows/backup.yml`, `scripts/db-backup.sh`, `scripts/db-restore-drill.sh`; drill executed with matching counts; optional GPG encryption and encrypted restore verified locally; local restore ~1s. The daily scheduled `backup`/`verify` jobs fail closed because the `DATABASE_URL` repository secret is not configured (run 43401586650, 2026-11-13), so no production dump has been verified yet. The `restore-drill` job no longer depends on the production dump and runs against an ephemeral migrated/seeded Postgres, but the updated workflow has not run on GitHub |
+| PostgreSQL backup workflow and restore drill | done/partial | `.github/workflows/backup.yml`, `scripts/db-backup.sh`, `scripts/db-restore-drill.sh`; a clean local drill on 2026-11-22 matched 21 public tables plus `_prisma_migrations` and all 8 applied migrations after AES-256 decryption. The daily scheduled `backup`/`verify` jobs fail closed because the `production` environment has no `DATABASE_URL` or `BACKUP_GPG_PASSPHRASE` (run 45008774752, 2026-11-22), so no production dump exists. The hardened `restore-drill` job runs against an ephemeral migrated/seeded Postgres, but the updated workflow has not run on GitHub |
 | Docker Compose verified | done | `docker compose config` validates; API image builds and passes health smoke |
 | Hosted maintenance catch-up | done | `.github/workflows/maintenance.yml` (15-min schedule plus dispatch) calls `/v1/internal/maintenance` with `CRON_SECRET`; manual run 43460637331 returned `ok:true` across 16 contracts in 435 ms; the new schedule had not fired as of 2026-11-13 16:55 UTC (GitHub delays new schedules), and the Vercel daily cron remains the fallback |
 | Hosted stack | done | API on Vercel + Neon; `/v1/health` and `/v1/health/ready` return 200 once Neon wakes (first request after idle can return 503 while the database wakes); merchant, web and admin dashboards return 200 |
@@ -109,5 +109,5 @@ not fully exercised; **open** = not implemented.
 2. Add the `DATABASE_URL` repository secret so the scheduled production backup and restore verification run; scheduled off-site upload of encrypted backups and PITR are still missing.
 3. Real-extension Playwright tests; current browser tests mock Freighter.
 4. Settlement batch worker and reconciliation report.
-5. Cluster deployment, alert delivery, image signing, and measured production RTO/RPO (only logical restore time is measured). Remote `CI` 45066533798 and `Security` 45066533736 are green on commit `575012f`; the `deploy.yml` workflow has never run.
+5. Cluster deployment, alert delivery, image signing, and measured production RTO/RPO (only logical restore time is measured). Remote `CI` 45067193267 and `Security` 45067193233 are green on commit `b9bdba4`; the `deploy.yml` workflow has never run.
 6. Mainnet deployment. None has occurred.

@@ -1,0 +1,217 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "deployer": "GCNI62OIMAEADUTRCMPSP3PNO2W4ORZ6HAJUWQYF6ZUPRUXFXZ42CRV4",
+  "contracts": {
+    "feeManager": "CCNSHK7VXUK6646HMWFOPY7K3TEAHH6DSNTY2Z2KAHGBY4LZ76MODY7Y",
+    "merchantRegistry": "CBPJKD3YEXZXSFGWGC77N3FNB2VDNIDXDVKCQJA54H7MQQ5HU5OEHXDI",
+    "paymentRouter": "CCH5OCHWK7FMVMAZKVTHORNVSWOBXJX5RM5U7KSBYQFG2AOTGXGL5NHM",
+    "invoiceManager": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV",
+    "settlementManager": "CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J"
+  },
+  "deploymentRecord": "deployments/testnet-invoice-deployments.json",
+  "token": {
+    "assetCode": "WPAYINV",
+    "issuer": "GCNI62OIMAEADUTRCMPSP3PNO2W4ORZ6HAJUWQYF6ZUPRUXFXZ42CRV4",
+    "contractId": "CAM7IBX7FDGGXLBMBO2F7VYTV5ERZUBQ7NXOKSSOT5AWAPVIYCMCH2YD",
+    "deployTxHash": "already-deployed",
+    "mintTxHash": "d49616beafd2c320e68bf6e97513755e00a6474aef2fddd09e509ed884965580"
+  },
+  "merchant": {
+    "id": "1",
+    "owner": "GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ",
+    "settlement": "GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ",
+    "registerTx": "044c02025e5c63f739db9b727cbb65e3e9d9ad6b07ecfaf5834a4e292cedbd7e",
+    "approvalTx": "c7c5ed0809129c2178df71cb060d4f54dc2dbb3ca5bdbe8f51918aeda42bbd1a"
+  },
+  "initializeTxHashes": {
+    "paymentRouter": {
+      "txHash": "9167604c09b63d32154eabf7cd316831fb3306c34a7dfb6b402a50e32e65367d",
+      "ledger": 5871786
+    },
+    "feeManager": {
+      "txHash": "65222191bad5c011778184fc17b324d341ac51967cc9d66d2309d1722c5ebebb",
+      "ledger": 5871783
+    }
+  },
+  "invoice": {
+    "id": "2",
+    "memo": "invoice-1795382714",
+    "amount": "5000000",
+    "fee": "125000",
+    "net": "4875000",
+    "dueAt": "1795386314",
+    "createTxHash": "e1df66667e8c9107f5be75b2e3f5f12c968f6686714ef6a05b84fab4151ae867",
+    "createLedger": 5871815,
+    "paymentTxHash": "22f2405878a07068d2cf4cedb3b4718de5a7a618a1cff60d56edf2e68a6137dd",
+    "paymentLedger": 5871816,
+    "paymentId": "2",
+    "status": "Paid",
+    "paymentStatus": "Settled",
+    "balances": {
+      "payerBefore": "100000000",
+      "payerAfter": "95000000",
+      "treasuryBefore": "125000",
+      "treasuryAfter": "250000",
+      "merchantBefore": "4875000",
+      "merchantAfter": "9750000"
+    }
+  },
+  "events": {
+    "invoice": {
+      "id": "0025219253393186816-0000000000",
+      "txHash": "e1df66667e8c9107f5be75b2e3f5f12c968f6686714ef6a05b84fab4151ae867",
+      "ledger": 5871815,
+      "topics": [
+        "invoice",
+        "2"
+      ],
+      "value": [
+        "GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ",
+        "1",
+        "5000000"
+      ]
+    },
+    "paid": {
+      "id": "0025219257688186880-0000000003",
+      "txHash": "22f2405878a07068d2cf4cedb3b4718de5a7a618a1cff60d56edf2e68a6137dd",
+      "ledger": 5871816,
+      "topics": [
+        "paid",
+        "2"
+      ],
+      "value": [
+        "GA2DMDCDMMTE3L3NDE6BC2WRMK7IHC7K6XQ4UHK3AMDZDT7Z3ME6R3SA",
+        "2"
+      ]
+    },
+    "payment": {
+      "id": "0025219257688186880-0000000002",
+      "txHash": "22f2405878a07068d2cf4cedb3b4718de5a7a618a1cff60d56edf2e68a6137dd",
+      "ledger": 5871816,
+      "topics": [
+        "payment",
+        "2"
+      ],
+      "value": [
+        "GA2DMDCDMMTE3L3NDE6BC2WRMK7IHC7K6XQ4UHK3AMDZDT7Z3ME6R3SA",
+        "1",
+        "5000000",
+        "125000"
+      ]
+    }
+  },
+  "settlement": {
+    "windowId": "1",
+    "status": "Executed",
+    "total": "4875000",
+    "txHashes": {
+      "open": "0e6567dde277113a46506c4f6b4803c47b98491c8ffd01ed6a5e658efc4b2daf",
+      "entry": "07c7221facdb354910615269b8d4917b1330b26ef6206d7003900798d8e43894",
+      "close": "7f1f3eb717751223313a6d4e174033fef9d2723571e376210eda98fdee930653",
+      "fund": "e108b087a7beff8e5619d03b3ee37b2364cd6c18ba2fac1095db913f577207bc",
+      "execute": "99ef0d3010d8f0319d0c8cc21cae53b23759e64f69d8fbb214c9138fbbc54134"
+    },
+    "ledgers": {
+      "open": 5871818,
+      "entry": 5871819,
+      "close": 5871820,
+      "fund": 5871821,
+      "execute": 5871822
+    },
+    "merchantBefore": "9750000",
+    "merchantAfter": "14625000",
+    "poolAfter": "0",
+    "event": {
+      "id": "0025219283457966080-0000000001",
+      "txHash": "99ef0d3010d8f0319d0c8cc21cae53b23759e64f69d8fbb214c9138fbbc54134",
+      "ledger": 5871822,
+      "topics": [
+        "execute",
+        "1"
+      ],
+      "value": [
+        "GCNI62OIMAEADUTRCMPSP3PNO2W4ORZ6HAJUWQYF6ZUPRUXFXZ42CRV4",
+        "4875000"
+      ]
+    },
+    "atomicRetry": {
+      "windowId": "2",
+      "closeTx": "86f58e988fcde3cf8437c9472b76a5cc919fc921932f7a679b71939f9d45370f",
+      "underfunded": {
+        "test": "underfunded settlement execution",
+        "rejected": true,
+        "error": "CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J.execute simulation failed: HostError: Error(Contract, #7)"
+      },
+      "fundedTx": "9f44037e4c5e672d4dbcaecd5f13ffe8795da7a5804b1f847626ec9e168a35b9",
+      "executeTx": "b55f62c1fc705097ecb1724f132fbfc9448a327705b6f12344f862b5e2b032ea",
+      "status": "Executed",
+      "duplicateRejected": {
+        "test": "duplicate settlement execution",
+        "rejected": true,
+        "error": "CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J.execute simulation failed: HostError: Error(Contract, #8)"
+      }
+    },
+    "automationPoolFunding": null
+  },
+  "automationPoolFunding": {
+    "txHash": "5280fee6426b4a9ec918dc0df988eb96b73c19149109406209a1ad8c78170d29",
+    "ledger": 5871829,
+    "amount": "4875000",
+    "pool": "4875000"
+  },
+  "negativeTests": {
+    "results": [
+      {
+        "test": "duplicate invoice payment",
+        "rejected": true,
+        "error": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV.pay simulation failed: HostError: Error(Contract, #8)"
+      },
+      {
+        "test": "non-owner invoice creation",
+        "rejected": true,
+        "error": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV.create simulation failed: HostError: Error(Contract, #3)"
+      },
+      {
+        "test": "unsupported token payment",
+        "rejected": true,
+        "error": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV.pay simulation failed: HostError: Error(Storage, MissingValue)"
+      },
+      {
+        "test": "expired invoice payment",
+        "rejected": true,
+        "error": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV.pay simulation failed: HostError: Error(Contract, #9)"
+      },
+      {
+        "test": "wrong amount",
+        "rejected": null,
+        "notApplicable": "InvoiceManager.pay consumes the invoice's stored amount; the caller cannot supply an amount."
+      },
+      {
+        "test": "invalid transaction hash / replay",
+        "rejected": null,
+        "notApplicable": "The invoice API takes no transaction hash. Replay of the same payment is covered by the duplicate-payment rejection."
+      },
+      {
+        "test": "wrong invoice reference",
+        "rejected": null,
+        "notApplicable": "The contract treats the memo as opaque text and pays the invoice id supplied; it cannot validate an off-chain reference."
+      }
+    ],
+    "unsupportedTokenInvoice": {
+      "id": "3",
+      "token": "CBEQYBBST2PKGMWXHIL6XD4XFMNCQNKCUVFOEDP2XST223S4BSNDM762",
+      "createTx": "200a50d198b8a258b48184ef819345ec8763a5febf831d9925f5178d664d0dbc",
+      "status": "Cancelled"
+    },
+    "expiredInvoice": {
+      "id": "4",
+      "dueAt": 1795383080,
+      "createTx": "8ec0127f5896cc2ace331fb232927caa6a64a90fe90d8a8c8f79240f4fe04f6f",
+      "markExpiredTx": "324e3f261f905a865469dd501dbc0022880b6a645758c1a4dd297c1c80d91f09",
+      "status": "Expired"
+    }
+  },
+  "verifiedAt": "2026-11-22T21:26:28.201Z",
+  "negativesVerifiedAt": "2026-11-22T21:31:28.555Z"
+}

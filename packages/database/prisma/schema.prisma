@@ -322,7 +322,7 @@ model SettlementWindow {
   nextAttemptAt   DateTime?
   /// Set when a delayed/failed batch has already produced a notification.
   alertedAt       DateTime?
-  updatedAt       DateTime         @updatedAt
+  updatedAt       DateTime         @default(now()) @updatedAt
 
   merchant Merchant?         @relation(fields: [merchantId], references: [id], onDelete: SetNull)
   entries  SettlementEntry[]
@@ -341,7 +341,7 @@ model SettlementEntry {
   amount             BigInt
   paymentCount       Int      @default(0)
   createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  updatedAt          DateTime @default(now()) @updatedAt
 
   settlementWindow SettlementWindow @relation(fields: [settlementWindowId], references: [id], onDelete: Cascade)
   merchant         Merchant?        @relation(fields: [merchantId], references: [id], onDelete: SetNull)

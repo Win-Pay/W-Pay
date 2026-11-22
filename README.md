@@ -10,30 +10,34 @@ subscriptions, and settle to their own treasury address — with customer,
 merchant and administrator applications, an on-chain event indexer, and a
 TypeScript SDK.
 
-> **Deployment status (2026-11-13): backend and frontends hosted, contracts
-> live on Testnet.** The API runs on Vercel at
+> **Deployment status (rechecked 2026-11-22): backend and frontends hosted,
+> contracts live on Testnet.** The API runs on Vercel at
 > https://wpay-api-six.vercel.app on Neon Postgres and Upstash Redis. Seven
 > migrations were applied at that deployment; the repository now contains an
 > eighth (`0008_settlement_automation`) that must be applied with
 > `prisma migrate deploy` before the automatic settlement endpoints can run in
-> production, and its code has not been redeployed. All 16 Testnet contract ids
+> production, and the new code has not been redeployed. A direct check on
+> 2026-11-22 returned `404` for `/v1/admin/settlements/automation`, confirming
+> the hosted code is still the older build. All 16 original Testnet contract ids
 > are configured.
 > `/v1/health` reports `database: "up"`, `soroban: "up"` and every contract;
-> `/v1/health/ready` returns `ready: true`; the three frontends are deployed
-> against that origin and browser-to-API calls were verified from each one.
+> `/v1/health/ready` returns `200`; the three frontends are deployed against
+> that origin and browser-to-API calls were verified from each one.
 > Two long-running processes do not fit a request-scoped serverless host. They
 > are covered by a Vercel daily cron plus a GitHub Actions catch-up every
 > 15 minutes (`.github/workflows/maintenance.yml`), both calling
 > `GET /v1/internal/maintenance` with `CRON_SECRET`. The route drains due
 > webhook deliveries and runs one indexer pass from the durable cursor, so
-> missed work is applied rather than lost; `gh workflow run maintenance.yml`
-> triggers an immediate pass. The repository secret is configured, and a
-> manual dispatch on 2026-11-13 returned `ok:true` across all 16 contracts.
+> missed work is applied rather than lost. The repository secret is configured,
+> and a manual dispatch on 2026-11-13 returned `ok:true` across all 16 contracts.
 > Lag is therefore minutes rather than hours
 > (GitHub can delay scheduled runs), but real-time behaviour still needs the
 > Compose/Kubernetes workers. There is no mainnet deployment and no external
-> audit. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and
-> transaction hashes, [docs/VERCEL.md](docs/VERCEL.md) for hosting details and
+> audit. A separate isolated five-contract deployment on 2026-11-22 executed a
+> real invoice payment, settlement windows and automatic settlement on Testnet;
+> see [docs/TESTNET_VERIFICATION.md](docs/TESTNET_VERIFICATION.md). See
+> [DEPLOYMENTS.md](DEPLOYMENTS.md) for verified contract ids and transaction
+> hashes, [docs/VERCEL.md](docs/VERCEL.md) for hosting details and
 > [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the worker runbook.
 
 ## Live deployments
@@ -152,7 +156,7 @@ redeploying them needs `SOROBAN_SOURCE_SECRET` and
 | REST API (NestJS) | Implemented and hosted on Vercel: auth with HttpOnly refresh cookies, CSRF headers, rotating tokens and per-account lockout, merchants, payments, invoices, escrows, refunds, subscriptions, settlements, treasury, webhooks, analytics, audit, health, metrics; 190 tests including real Postgres integration |
 | Database (Postgres + Prisma) | Schema, 8 migrations (including refresh-token families, indexer cursor and settlement automation), client, seed; transactions and rollbacks covered by integration tests; hosted on Neon with 7 migrations applied, 0008 pending |
 | Indexer | Soroban RPC event ingestion with durable cursors, idempotent persistence, checkpoints, dead-letter retry with admin visibility, historical replay and consistency reporting, health/metrics, payment/refund/escrow/settlement projections — implemented; runs as a 15-minute GitHub Actions + daily Vercel cron catch-up, **not** as a 5-second worker |
-| Settlement automation | Opt-in `off`/`prepare`/`execute` worker invoked by maintenance: atomic payment claims, refund-aware amounts, hold period, bounded resumable Soroban execution, exponential backoff, in-app alerts, retry endpoint and reconciliation report. Tested against Postgres with a fake executor; not yet run on Testnet |
+| Settlement automation | Opt-in `off`/`prepare`/`execute` worker invoked by maintenance: atomic payment claims, refund-aware amounts, hold period, bounded resumable Soroban execution, exponential backoff, in-app alerts, retry endpoint and reconciliation report. The real API worker executed window 4 on Testnet on 2026-11-22 with four `SUCCESS` Soroban transactions; a later stable pass created no duplicate batch. The hosted API is still on the pre-automation build |
 | TypeScript SDK | API client with automatic refresh retry, Soroban gateway, contract call builders, wallet adapters, tests |
 | Customer checkout | Invoice lookup, merchant branding, transparent fee split, wallet connect/disconnect, signed Soroban payment, progress and receipt with Explorer link; success only after backend verification. A separate `/landing` page presents the product |
 | Merchant dashboard | Email or wallet login, wallet onboarding, analytics, payments, invoices, refunds, settlement batches, subscriptions, webhooks and API keys |
@@ -185,10 +189,20 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   [docs/VERCEL.md](docs/VERCEL.md) are applied.
 - No hosted end-to-end payment with a real Freighter extension has been
   exercised yet. The hosted stack has been verified through health, CSRF,
-  CORS, DB-backed login rejection and browser-to-API calls.
+  CORS, DB-backed login rejection and browser-to-API calls. The isolated
+  Testnet invoice payment on 2026-11-22 was signed by generated keypairs through
+  the SDK, not by Freighter; do not describe it as a wallet-extension test.
 - The historical Testnet payment (`db354f7f…e47d`) proves on-chain settlement and
   fee splitting. Its memo was `e2e-invoice`, so after invoice-number memo
   binding it no longer qualifies as an invoice-level confirmation replay.
+- A separate isolated five-contract run on 2026-11-22 created and paid invoice
+  `2` (`e1df6666…e867`, payment `22f24058…37dd`, ledger `5871816`), verified the
+  `invoice`/`payment`/`paid` events and the exact 250 bps balance split, then
+  executed settlement windows and automatic settlement window `4`
+  (`921f5836…4319`). Duplicate payment, non-owner creation, unsupported token
+  and expired-invoice calls were rejected. Evidence is in
+  [docs/TESTNET_VERIFICATION.md](docs/TESTNET_VERIFICATION.md); this is not a
+  Freighter run and not the hosted API.
 - Wallet flows are implemented with Freighter connect/sign/submit. Nine
   Playwright tests mock the provider and API (checkout, fee disclosure, failed
   submission, landing page, merchant dashboard, admin dashboard); real-extension
@@ -202,23 +216,33 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   approval transaction to sign (`409 REFUND_NOT_LINKED` before that).
 - Redis-backed rate limiting is implemented, but deployments without `REDIS_URL`
   fall back to per-process counters and multiply the quota per replica.
-- Automatic settlement is implemented but has not executed a batch on Testnet;
-  the integration suite uses a fake executor. Migration `0008` and the new API
-  code are not deployed to the hosted stack. `SETTLEMENT_AUTOMATION` defaults to
-  `off`, and `execute` additionally requires an operator key with the contract
-  `Operator` role and a funded pool.
-- The daily production backup workflow fails closed because the `DATABASE_URL`
-  repository secret is not configured (run 43401586650), so no automatic
-  production backup has run yet. The scripted backup/restore drill was verified
-  locally, including GPG AES-256 passphrase encryption, checksum verification,
-  retention pruning and a full-table/migration restore comparison. Archive TOC
-  validation is configured in the drill when `pg_restore` is installed and in
-  the workflow verify job, but this local run used the Docker fallback and did
-  not validate the TOC. The independent `restore-drill` job now runs against an
-  ephemeral migrated/seeded Postgres without `DATABASE_URL`, but the updated
-  workflow has not run on GitHub. Set `DATABASE_URL` and optionally
-  `BACKUP_GPG_PASSPHRASE` (or `BACKUP_GPG_RECIPIENT`) as repository secrets to
-  enable the production dump and verification jobs.
+- Automatic settlement has executed a batch on Testnet through a supervised
+  local API process: payment `2` was claimed once, window `4` was created and
+  executed with four `SUCCESS` transactions, four expected dead letters were
+  reviewed and resolved through the audited endpoint, and a stable second pass
+  inserted no events and created no duplicate. Migration `0008` and the new API
+  code are **not** deployed to the hosted stack, and
+  `GET /v1/admin/settlements/automation` returns `404` there.
+  `SETTLEMENT_AUTOMATION` defaults to `off`, and `execute` additionally requires
+  an operator key with the contract `Operator` role and a funded pool.
+- The daily production backup workflow fails closed because the `production`
+  environment has neither `DATABASE_URL` nor `BACKUP_GPG_PASSPHRASE` configured.
+  The last scheduled run (45008774752, commit `9f0fd10`) failed at preflight
+  with `DATABASE_URL secret is not configured`, so no automatic production
+  backup has run. The workflow now refuses to upload an unencrypted dump,
+  verifies the archive TOC, compares every row count and the exact applied
+  migration set, and opens one deduplicated failure issue. The scripted
+  backup/restore drill was re-run cleanly on 2026-11-22: GPG AES-256
+  passphrase encryption, checksum verification, all 21 public tables plus
+  `_prisma_migrations`, eight matched migrations, and a matching restore.
+  Archive TOC validation is configured in the drill when `pg_restore` is
+  installed and in the workflow verify job, but this local run used the Docker
+  fallback and did not validate the TOC. The independent `restore-drill` job
+  runs against an ephemeral migrated/seeded Postgres without production
+  secrets, but the updated workflow has not yet run on GitHub. A local drill is
+  not a production backup. Follow
+  [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md#enabling-production-backups)
+  to set both environment secrets and run the acceptance check.
 - No external security audit has occurred. The internal review in
   [docs/AUDIT.md](docs/AUDIT.md) is not an audit.
 
@@ -293,15 +317,22 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Contract WASM build | `pnpm contracts:build` | 16/16 artifacts; hashes match deployed Testnet WASM |
 | Testnet deployment | `node scripts/deploy-testnet.cjs` | 16 contracts, all upload/create txs `SUCCESS` |
 | Testnet E2E payment | `node scripts/e2e-testnet.cjs` | payment 1 `Settled`, balances and event verified |
+| Isolated Testnet deployment | five-contract deploy with `DEPLOYMENTS_FILE=deployments/testnet-invoice-deployments.json` | 5/5 upload/create `SUCCESS`; WASM hashes match local build |
+| Isolated invoice E2E | `node scripts/e2e-invoice-testnet.cjs` | invoice 2 `Paid`, payment 2 `Settled`; events and exact fee split verified; four negative cases rejected |
+| Manual settlement on Testnet | same E2E | windows 1 and 2 `Executed`; underfunded and duplicate executions rejected |
+| Automatic settlement on Testnet | local API maintenance in `execute` mode | window 4 `EXECUTED`, 4/4 Soroban txs `SUCCESS`, no duplicate on stable pass |
 | TypeScript typecheck | `pnpm typecheck` | 23/23 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
 | TypeScript tests | `pnpm test` with `DATABASE_URL` | 263 passed, 2 skipped (api 190, indexer 31, sdk 14, hooks 4, shared 10, e2e 10, database 4) |
 | API coverage | `pnpm --filter @wpay/api test:coverage` | 88.25% statements, 71.87% branches, 91.36% functions; the settlement executor is 90.42% statements |
-| Settlement automation | Postgres integration suite, fake executor | claim once, refund aggregation, hold exclusion, success, retry backoff, non-retryable and cancellation paths, reconciliation totals and malformed-window detection |
+| Settlement automation (unit/integration) | Postgres integration suite, fake executor | claim once, refund aggregation, hold exclusion, success, retry backoff, non-retryable and cancellation paths, reconciliation totals and malformed-window detection |
+| Settlement automation (Testnet) | supervised API maintenance | real claim, batch and four `SUCCESS` on-chain transactions; see `deployments/testnet-invoice-automation.json` |
 | Indexer replay/consistency | Postgres integration suite | replay from an earlier ledger inserted one event, skipped it on rerun, and reported the malformed event plus projection invariant |
+| Indexer Testnet catch-up | maintenance against scratch DB + Testnet | 19 events fetched/inserted, 12 projections applied, 0 failures; checkpoints advanced; 4 expected dead letters resolved; stable pass 0/0/0 |
 | Browser tests | `pnpm test:browser` | 9 passed: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
-| Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | 200; Neon and Soroban up; 16/16 contract flags; CSRF cookie `Secure; HttpOnly; SameSite=None`; unknown-account login 401; sixth failure 429 `ACCOUNT_LOCKED`; disallowed origin 403; serverless `/docs` absent |
+| Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | rechecked 2026-11-22: both 200; Neon and Soroban up; 16/16 contract flags; previously verified CSRF cookie, unknown-account 401, sixth-failure 429, disallowed origin 403 |
+| Hosted settlement automation | `GET /v1/admin/settlements/automation` | BLOCKED: 404 on 2026-11-22; migration 0008 and the new API code are not deployed |
 | Hosted maintenance cron | `GET /v1/internal/maintenance` with and without `CRON_SECRET` | 200 `ok:true` (16 contracts scanned, 454 ms) with the bearer secret after the 2026-11-13 redeploy; 401 without/with a wrong secret; 404 when unset |
 | Hosted maintenance catch-up | GitHub Actions run 43460637331 (`maintenance.yml`, manual dispatch) | success; `ok:true`, 16 contracts scanned, 0 failures, 435 ms; `CRON_SECRET` masked in the log |
 | Hosted refund retry | `POST /v1/refunds/:id/approve-transaction` on the deployed API | 401 `UNAUTHORIZED` without a session (route present after the 2026-11-13 redeploy); linked/unlinked/unauthorized behaviour covered by the blockchain integration suite |
@@ -311,13 +342,15 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Hosted token handling | forged `alg: none` / `HS384` bearer tokens against `/v1/auth/me` | rejected (403 at the edge, 401 `UNAUTHORIZED` from the API); only HS256-issued tokens are accepted |
 | Hosted frontends | headless Chromium against all three URLs | pages 200, zero CSP violations, no "Backend not configured"; per-request nonce CSP with `'strict-dynamic'`; API calls from each page origin succeed (`health` 200, `csrf` 200, refresh 401 without session) |
 | Hosted contracts | Soroban `getContractData` for each recorded id | 16/16 contract instances live on Testnet |
-| GitHub Actions | CI + Security workflows | green on `575012f` (CI 45066533798, Security 45066533736); 11/11 checks completed, none skipped |
+| GitHub Actions | CI + Security workflows | green on `b9bdba4` (CI 45067193267, Security 45067193233); 11/11 checks completed, none skipped |
+| GitHub governance | branch protection, environment rules, scoped issues | BLOCKED for protection/secrets: the current token gets `403` for branch protection and environment secret names; `production` has no protection rules. Issues #1–#3 are filed; exact owner runbook in [docs/GITHUB_GOVERNANCE.md](docs/GITHUB_GOVERNANCE.md) |
 | Production image smoke | Docker image with `NODE_ENV=production`, read-only rootfs, `cap-drop ALL` | `/v1/health` and `/v1/health/ready` 200; `HttpOnly; Secure; SameSite=None` cookies; refresh rotation/reuse enforced |
 | Testnet RPC re-check | Soroban `getLedgerEntries` + `getTransaction` | 16/16 contract instances exist; 16/16 create txs and the E2E payment tx `SUCCESS` |
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
-| Backup restore drill | `scripts/db-restore-drill.sh` | checksum, all-table row counts and 8 applied migrations match after AES-256 decryption; local restore ~1s. TOC validation was skipped because `pg_restore` is not installed locally; the workflow verify job runs `pg_restore --list` |
+| Backup restore drill | `scripts/db-restore-drill.sh` | 2026-11-22: checksum verified, all 21 public tables plus `_prisma_migrations` matched, 8 applied migrations matched after AES-256 decryption. TOC validation was skipped because `pg_restore` is not installed locally; the workflow verify job runs `pg_restore --list` |
+| Production backup workflow | GitHub Actions `backup.yml` | BLOCKED: last scheduled run 45008774752 failed at preflight (`DATABASE_URL secret is not configured`); no production backup exists |
 | Backup retention | `BACKUP_RETENTION_DAYS=0 scripts/db-backup.sh` | prune path removed only `wpay-*.dump*` artifacts older than the cutoff |
 | Testnet resources | `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 stroops min resource fee, 1,840-byte assembled envelope |
 

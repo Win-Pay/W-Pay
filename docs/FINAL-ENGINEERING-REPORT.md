@@ -20,9 +20,11 @@ workspace; deployment identifiers live in [DEPLOYMENTS.md](../DEPLOYMENTS.md).
 > describe the earlier snapshot.
 >
 > **Latest state (2026-11-22).** Section 8 supersedes earlier test counts,
-> coverage, settlement-worker, indexer-replay and backup statements. The new
-> migration and API code are local only; the hosted deployment has not been
-> migrated or redeployed.
+> coverage, settlement-worker, indexer-replay and backup statements. Section 8.1
+> records the real isolated Testnet invoice and automatic settlement run, and
+> section 9 is the final PASS/PARTIAL/FAIL/BLOCKED table with readiness
+> percentages. The new migration and API code remain local only; the hosted
+> deployment has not been migrated or redeployed.
 
 ## 1. What changed
 
@@ -171,9 +173,10 @@ occurred.
    scheduled off-site upload of encrypted backups.
 4. Real-extension Playwright tests covering Freighter rejection/approval.
 5. Live Testnet settlement execution and reconciliation proof. Automatic
-   prepare/execute orchestration and reconciliation are implemented and tested
-   against Postgres with a fake executor, but no batch has run on Testnet and
-   migration 0008 is not applied to the hosted database.
+   prepare/execute orchestration and reconciliation are implemented, tested
+   against Postgres with a fake executor, and were later exercised on Testnet
+   through a supervised local API (section 8.1). The hosted database still lacks
+   migration `0008` and the hosted API is not redeployed.
 6. Cluster deployment, alert delivery, image signing, and measured production
    RTO/RPO (only logical restore time is measured). Remote `CI` and `Security`
    are green.
@@ -284,30 +287,101 @@ Verified locally:
   hooks 4, shared 10, e2e 10 + 2 skipped, database 4).
 - API coverage: 88.25% statements, 71.87% branches, 91.36% functions; the
   settlement executor is 90.42% statements, including resume, budget, mismatch,
-  cancellation and failed-transaction paths. The live Soroban submission path
-  still uses a fake gateway and is not Testnet-verified.
-- `pnpm test:browser`: 9 passed after installing Chromium system dependencies.
+  cancellation and failed-transaction paths. The live submission path was later
+  exercised on Testnet (section 8.1).
+- `pnpm test:browser`: 9 passed on 2026-11-22 (Playwright 1.65, cached Chromium;
+  checkout 5, merchant 2, admin 2) with mocked Freighter and API.
 - API and indexer Docker images build and boot; `/v1/health` and indexer
   `/health` return 200.
-- Backup: encrypted AES-256 round-trip, checksum verification, every-table row
-  counts and 8 applied migrations matched; retention pruning removed only WPay
-  artifacts. Archive TOC validation is configured but was skipped locally
-  because `pg_restore` is not installed; the backup workflow has not run.
+- Backup: encrypted AES-256 round-trip, checksum verification, all 21 public
+  tables plus `_prisma_migrations`, and all 8 applied migrations matched; the
+  ciphertext SHA-256 was
+  `c30370a3726d98d260fb91a1125a3e2197256383ccd59b9b2a4928c8f9ce5eda`.
+  Retention pruning removed only WPay artifacts. Archive TOC validation is
+  configured but was skipped locally because `pg_restore` is not installed; the
+  backup workflow has not run.
 - Rust on rustc 1.100.0: `cargo fmt --check`, `cargo clippy --all-targets -- -D
   warnings`, `cargo test` (140 passed, including both resource benchmarks) and
   the 16-contract WASM build all pass.
 - Workflow YAML parses; `bash -n scripts/*.sh` passes.
-- GitHub Actions on `575012f` (2026-11-22): CI run 45066533798 and Security run
-  45066533736 both succeeded; all 11 check runs completed and none was skipped.
+- GitHub Actions on `b9bdba4` (2026-11-22): CI run 45067193267 and Security run
+  45067193233 both succeeded; all 11 check runs completed and none was skipped.
   Dependency review is PR-only and will run on the next pull request.
 
 Not verified / BLOCKED:
 
-- No Testnet settlement execution. The automatic suite uses a fake executor and
-  does not prove live signing, RPC parsing or pool funding.
 - The hosted Neon database still has 7 migrations, and the hosted API predates
-  this code. Migration 0008 and a redeploy are required before using the routes.
-- The GitHub `DATABASE_URL` secret is still absent, so scheduled production
-  backups fail closed. A local drill is not a production backup.
+  this code. Migration 0008 and a redeploy are required before using the routes;
+  `GET /v1/admin/settlements/automation` still returns `404`.
+- The GitHub `production` environment has no `DATABASE_URL` or
+  `BACKUP_GPG_PASSPHRASE`. The last scheduled backup run (45008774752) failed at
+  preflight, so no production backup exists. A local drill is not production
+  evidence.
 - No external audit, multisig, hardware-wallet custody or real-extension
   browser payment.
+
+### 8.1 Real Testnet invoice, settlement and automation run (2026-11-22)
+
+This pass deployed an isolated five-contract suite, paid a real invoice and ran
+both manual and automatic settlement. It did not modify the original 16-contract
+records.
+
+- Five contracts deployed with matching local WASM hashes: payment router,
+  invoice manager, settlement manager, merchant registry and fee manager.
+- Invoice `2` (`5,000,000` stroops, 250 bps fee) was created in tx
+  `e1df6666…e867` (ledger `5871815`) and paid in tx `22f24058…37dd` (ledger
+  `5871816`). Events `invoice`, `payment` and `paid` were verified; payer,
+  treasury and merchant balance deltas were exact.
+- Settlement window `1` executed (`99ef0d30…4134`), window `2` rejected an
+  underfunded execution (`Error(Contract, #7)`), then executed after funding and
+  rejected a duplicate execution (`Error(Contract, #8)`).
+- Negative cases rejected: duplicate payment (`#8`), non-owner creation (`#3`),
+  unsupported token (`Storage MissingValue`) and expired invoice (`#9`). Wrong
+  amount, wrong reference and invalid hash are not contract inputs; they are
+  marked not applicable rather than claimed.
+- The live events were replayed into a scratch Postgres database and processed by
+  the real API indexer and settlement worker in `execute` mode. Window `4`
+  executed with four `SUCCESS` transactions
+  (`864391c9…130f`, `0a59385d…164f`, `4cc8c9e2…2914`, `921f5836…4319`, ledgers
+  5871864–5871867), one payee and total `4,875,000`. Checkpoints advanced, four
+  expected dead letters were reviewed and resolved through the operator endpoint,
+  and a stable pass fetched/inserted/failed `0/0/0` with no duplicate payment or
+  batch.
+- Evidence: [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md),
+  `deployments/testnet-invoice-deployments.json`,
+  `deployments/testnet-invoice-e2e.json` and
+  `deployments/testnet-invoice-automation.json`.
+
+This is not a real Freighter run: the transactions were signed by generated
+keypairs through the SDK. It is also not the hosted deployment; the API/indexer
+ran locally against a scratch database.
+
+## 9. Final acceptance against the brief
+
+Statuses are deliberately conservative. "PASS" means the item was implemented
+and verified with the evidence named; "PARTIAL" means core evidence exists but a
+required part is missing; "BLOCKED" means it could not be completed in this
+workspace (credentials, permissions, an external party or hardware).
+
+| Item | Status | Evidence / remaining gap |
+| --- | --- | --- |
+| Production backup | **BLOCKED** | Workflow is hardened (mandatory encryption, checksum, TOC verify, row/migration manifests, failure issue). Local AES-256 drill passed on 2026-11-22 (21 tables, 8 migrations). No production backup exists: `production` has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`; run 45008774752 failed at preflight |
+| Migration `0008_settlement_automation` | **PARTIAL** | Locally applied through Prisma on PostgreSQL 16; data preservation, FK, nullability, unique index and `migrate diff` clean; additive/Neon-compatible. Hosted Neon remains at 7 migrations; command documented; no credentials in this workspace |
+| Real Testnet invoice payment | **PARTIAL** | On-chain invoice `2` payment PASS (`22f24058…37dd`), events and exact fee split verified; negative cases rejected. The required real Freighter wallet flow is **NOT RUN** (generated keypairs only) |
+| Automatic Testnet settlement | **PASS (Testnet, supervised)** | Real API worker claimed payment, created/executed window `4`, four `SUCCESS` transactions, no duplicate on stable pass; dead letters resolved. Not deployed to the hosted API |
+| Indexer/backend reliability | **PARTIAL** | Durable checkpoints/cursors, live catch-up, replay, dead-letter review, duplicate protection and stable second pass verified. No multi-hour outage test, no resident worker, no RPC failover; hosted indexer is a periodic maintenance call |
+| Admin/contract security | **PARTIAL** | RBAC, roles, pause, treasury timelock, upgrade delay, audit logging, rate limits and replay protection implemented and tested. Multisig, hardware wallet, external timelock and independent audit are **not** configured/verified; UpgradeManager only self-upgrades |
+| Production deployment | **PARTIAL** | API `/v1/health` and `/v1/health/ready` 200 with DB/Soroban up and 16/16 contracts; three frontends 200. Hosted API is stale (`/v1/admin/settlements/automation` 404), migration 0008 absent, `winpay.com` DNS still wrong |
+| GitHub governance | **BLOCKED** | CI/Security green on `b9bdba4`; workflows/templates exist; issues [#1](https://github.com/Win-Pay/W-Pay/issues/1), [#2](https://github.com/Win-Pay/W-Pay/issues/2) and [#3](https://github.com/Win-Pay/W-Pay/issues/3) filed. Branch protection and environment secret names return `403` with the current token; `production` has no protection rules. Owner runbook: [GITHUB_GOVERNANCE.md](GITHUB_GOVERNANCE.md) |
+| Contributor readiness | **PARTIAL** | Issue/PR templates, contribution docs, a scoped backlog and three genuine remote issues now exist; tests and CI are strong. Branch protection/secrets and signed-commit enforcement remain blocked with the current token |
+| Independent audit | **BLOCKED** | An audit hand-off package is prepared in [AUDIT.md](AUDIT.md#independent-soroban-audit-package): scope, privileged entry points, trust assumptions, tests, risks and remediation backlog. No auditor has been engaged and no report exists |
+
+### Readiness percentages
+
+These are judgement estimates for the remaining work, not measured pass rates.
+
+| Dimension | Estimate | Reasoning |
+| --- | --- | --- |
+| Drips Wave automated review readiness | **80%** | Green CI/Security, 140 Rust tests, 263 TypeScript tests, 9 browser tests, coverage, dependency audit and documented evidence. Gaps: uncommitted pass not yet pushed, hosted code/migration stale, production backup blocked, one transitive Rust advisory |
+| Human review readiness | **65%** | Architecture, threat model, audit package, Testnet transaction evidence and honest limitations are documented. Gaps: no independent audit, no multisig/hardware ceremony, no real Freighter proof, no production backup, hosted deployment mismatch |
+| Production deployment readiness | **35%** | Only Testnet, single-key admin, unaudited contracts, stale hosted API/migration, no production backup/PITR, no real-wallet E2E, scheduler-based indexer/webhooks. The verified core payment/settlement flow is real, but the production prerequisites are not met |

@@ -1,0 +1,227 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "verifiedAt": "2026-11-22T21:32:49.867Z",
+  "latestLedger": 5871896,
+  "source": {
+    "invoiceId": "cmwscngls00028frn2rnbeo8v",
+    "number": "INV-2026-0002",
+    "status": "PAID",
+    "contractInvoiceId": "2",
+    "paymentId": "cmwscnglw00048frnqn0jmg4o",
+    "paymentStatus": "SETTLED",
+    "amount": "5000000",
+    "fee": "125000",
+    "net": "4875000",
+    "contractPaymentId": "2",
+    "txHash": "22f2405878a07068d2cf4cedb3b4718de5a7a618a1cff60d56edf2e68a6137dd",
+    "settledAt": "2026-11-22T21:29:18.003Z"
+  },
+  "automation": {
+    "mode": "execute",
+    "windowId": "4",
+    "status": "EXECUTED",
+    "total": "4875000",
+    "batchKey": "auto:CAM7IBX7FDGGXLBMBO2F7VYTV5ERZUBQ7NXOKSSOT5AWAPVIYCMCH2YD:2026-11-22T21:29:18.600Z:5afd3bf8",
+    "txHash": "921f583681ca16cdc12ac3a04ac1f260d5c26987666f3bd5758264ec35eb4319",
+    "attempts": 0,
+    "lastError": null,
+    "nextAttemptAt": null,
+    "entries": [
+      {
+        "payee": "GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ",
+        "amount": "4875000",
+        "paymentCount": 1
+      }
+    ],
+    "auditAction": "settlement.auto.execute",
+    "auditEntityId": "cmwscnoya000o8ftjxvegiyvm",
+    "txHashes": [
+      "864391c9846e935bde47b11a4e8b11248883ab635699940c4354e6c1295c130f",
+      "0a59385d63f93cd0702e587beba729a90085e58208f2426939123394b64a164f",
+      "4cc8c9e2b4289a5a0f135117127d67076be2715c18ebac3f68a2493c53892914",
+      "921f583681ca16cdc12ac3a04ac1f260d5c26987666f3bd5758264ec35eb4319"
+    ],
+    "transactions": {
+      "864391c9846e935bde47b11a4e8b11248883ab635699940c4354e6c1295c130f": {
+        "status": "SUCCESS",
+        "ledger": 5871864
+      },
+      "0a59385d63f93cd0702e587beba729a90085e58208f2426939123394b64a164f": {
+        "status": "SUCCESS",
+        "ledger": 5871865
+      },
+      "4cc8c9e2b4289a5a0f135117127d67076be2715c18ebac3f68a2493c53892914": {
+        "status": "SUCCESS",
+        "ledger": 5871866
+      },
+      "921f583681ca16cdc12ac3a04ac1f260d5c26987666f3bd5758264ec35eb4319": {
+        "status": "SUCCESS",
+        "ledger": 5871867
+      }
+    }
+  },
+  "idempotency": {
+    "unresolvedIndexerFailures": 0,
+    "claimedPaymentId": "cmwscnoya000o8ftjxvegiyvm",
+    "batchesWithSameSource": 1,
+    "windowCount": 1
+  },
+  "checkpoints": [
+    {
+      "contractId": "CBPJKD3YEXZXSFGWGC77N3FNB2VDNIDXDVKCQJA54H7MQQ5HU5OEHXDI",
+      "lastLedger": 5871868,
+      "hasCursor": true
+    },
+    {
+      "contractId": "CCH5OCHWK7FMVMAZKVTHORNVSWOBXJX5RM5U7KSBYQFG2AOTGXGL5NHM",
+      "lastLedger": 5871867,
+      "hasCursor": true
+    },
+    {
+      "contractId": "CCNSHK7VXUK6646HMWFOPY7K3TEAHH6DSNTY2Z2KAHGBY4LZ76MODY7Y",
+      "lastLedger": 5871868,
+      "hasCursor": true
+    },
+    {
+      "contractId": "CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J",
+      "lastLedger": 5871867,
+      "hasCursor": true
+    },
+    {
+      "contractId": "CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV",
+      "lastLedger": 5871867,
+      "hasCursor": true
+    }
+  ],
+  "maintenanceRuns": [
+    {
+      "ok": true,
+      "webhooks": {
+        "delivered": 0,
+        "error": null
+      },
+      "indexer": {
+        "contracts": 5,
+        "fetched": 19,
+        "inserted": 19,
+        "applied": 12,
+        "failed": 0
+      },
+      "settlement": {
+        "mode": "execute",
+        "releasedPayments": 0,
+        "batchesCreated": 1,
+        "paymentsAssigned": 1,
+        "assignedTotal": "4875000",
+        "batches": [
+          {
+            "id": "cmwscnoya000o8ftjxvegiyvm",
+            "token": "CAM7IBX7FDGGXLBMBO2F7VYTV5ERZUBQ7NXOKSSOT5AWAPVIYCMCH2YD",
+            "total": "4875000",
+            "entries": 1
+          }
+        ],
+        "execution": {
+          "attempted": 1,
+          "executed": 1,
+          "pending": 0,
+          "failed": 0
+        },
+        "alerts": 0,
+        "errors": []
+      },
+      "durationMs": 19448
+    },
+    {
+      "ok": true,
+      "webhooks": {
+        "delivered": 0,
+        "error": null
+      },
+      "indexer": {
+        "contracts": 5,
+        "fetched": 4,
+        "inserted": 4,
+        "applied": 3,
+        "failed": 0
+      },
+      "settlement": {
+        "mode": "execute",
+        "releasedPayments": 0,
+        "batchesCreated": 0,
+        "paymentsAssigned": 0,
+        "assignedTotal": "0",
+        "batches": [],
+        "execution": {
+          "attempted": 0,
+          "executed": 0,
+          "pending": 0,
+          "failed": 0
+        },
+        "alerts": 0,
+        "errors": []
+      },
+      "durationMs": 579
+    }
+  ],
+  "deadLetterReview": {
+    "negativeInvoicesUnseeded": 4,
+    "entries": [
+      {
+        "kind": "invoice",
+        "contractInvoiceId": "3",
+        "txHash": "200a50d198b8a258b48184ef819345ec8763a5febf831d9925f5178d664d0dbc"
+      },
+      {
+        "kind": "cancel",
+        "contractInvoiceId": "3",
+        "txHash": "ee7f7023882889db66234f021cf2116add489b043a366ffccd99e66ef627f60e"
+      },
+      {
+        "kind": "invoice",
+        "contractInvoiceId": "4",
+        "txHash": "8ec0127f5896cc2ace331fb232927caa6a64a90fe90d8a8c8f79240f4fe04f6f"
+      },
+      {
+        "kind": "expire",
+        "contractInvoiceId": "4",
+        "txHash": "324e3f261f905a865469dd501dbc0022880b6a645758c1a4dd297c1c80d91f09"
+      }
+    ],
+    "statement": "The four intentionally unseeded negative-test invoices produced dead-letter projections. An OPERATOR reviewed and resolved all four through POST /v1/admin/indexer/failures/:id/resolve; the resolve actions are audit-logged. No existing payment or batch was modified.",
+    "unresolvedAfter": 0,
+    "auditAction": "indexer.failure.resolve"
+  },
+  "stablePass": {
+    "ok": true,
+    "webhooks": {
+      "delivered": 0,
+      "error": null
+    },
+    "indexer": {
+      "contracts": 5,
+      "fetched": 0,
+      "inserted": 0,
+      "applied": 0,
+      "failed": 0
+    },
+    "settlement": {
+      "mode": "execute",
+      "releasedPayments": 0,
+      "batchesCreated": 0,
+      "paymentsAssigned": 0,
+      "assignedTotal": "0",
+      "batches": [],
+      "execution": {
+        "attempted": 0,
+        "executed": 0,
+        "pending": 0,
+        "failed": 0
+      },
+      "alerts": 0,
+      "errors": []
+    },
+    "durationMs": 536
+  }
+}

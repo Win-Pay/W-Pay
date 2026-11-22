@@ -83,20 +83,60 @@ columns and indexes. The hosted Vercel/Neon deployment was last migrated at 7,
 so run `pnpm db:migrate` against Neon before deploying the API code that uses
 those columns.
 
+Migration 0008 was validated locally on 2026-11-22 against PostgreSQL 16 through
+the real Prisma runner: migrations 0001–0007 were deployed, representative
+merchant/payment/invoice/window/entry rows were inserted, then 0008 was deployed
+with `prisma migrate deploy`. Every row count and pre-existing value was
+unchanged; the new columns received their documented defaults; the
+`Payment_settlementWindowId_fkey` link enforced references and set the column
+to `NULL` on window deletion; duplicate `batchKey` values were rejected while
+multiple `NULL`s were allowed; and `prisma migrate diff` reported
+`No difference detected` between the migrated database and `schema.prisma`.
+The migration is additive only (no drops or renames) and uses constructs
+supported by Neon Postgres. Its `CREATE INDEX` statements take a normal write
+lock, so apply it during a low-traffic window.
+
+Apply it to Neon with the owner connection string; this requires credentials and
+authorization that are not available in this workspace:
+
+```bash
+DATABASE_URL='postgresql://<owner>@<neon-host>/<db>?sslmode=require' pnpm db:migrate
+```
+
+Then confirm 8 applied migrations and redeploy the API before calling any
+settlement-automation endpoint. Do not mark the hosted migration complete until
+that command succeeds and the deployed API reports the new routes.
+
 `DATABASE_URL=... pnpm db:backup` writes a custom-format dump, validates its
 archive TOC when `pg_restore` is installed (otherwise warns), and writes a
 `.sha256` sidecar;
 `pnpm db:restore-drill <dump>` restores it into a scratch database and compares
 every public table plus applied migrations. The daily workflow in
-`.github/workflows/backup.yml` does both and fails closed on mismatch.
+`.github/workflows/backup.yml` does both and fails closed on mismatch, and
+refuses to upload a plaintext production dump.
 
-For an encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key) or
-`BACKUP_GPG_PASSPHRASE` (symmetric AES-256) before running the backup; the
-script writes `<dump>.gpg`, removes the plaintext and checksums the ciphertext.
-Upload only the ciphertext plus `.sha256` to storage in a different
-account/region; keep the private key/passphrase offline. Set
-`BACKUP_RETENTION_DAYS` to prune old `wpay-*` artifacts. Managed Postgres PITR
-is still required for RPO in minutes.
+The production workflow requires two **environment** secrets on the
+`production` environment: `DATABASE_URL` and `BACKUP_GPG_PASSPHRASE` (symmetric
+AES-256, also used by the verify job). Configure them with
+`gh secret set DATABASE_URL --env production` and
+`gh secret set BACKUP_GPG_PASSPHRASE --env production`, restrict the environment
+to `main`, then run `gh workflow run backup.yml --ref main`. Do not run the
+workflow until both secrets exist; it fails at preflight and opens a
+deduplicated failure issue. As of 2026-11-22 the environment exists but has no
+protection rules, and the secret names are not readable with the current token.
+The last scheduled run (45008774752, commit `9f0fd10`) failed with
+`DATABASE_URL secret is not configured`; no production backup has been taken.
+The local encrypted drill passed on 2026-11-22 (checksum, all 21 public tables,
+eight migrations), but a local drill is not production evidence. Full steps and
+acceptance criteria are in
+[docs/DISASTER_RECOVERY.md](DISASTER_RECOVERY.md#enabling-production-backups).
+
+For a manual encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key)
+or `BACKUP_GPG_PASSPHRASE` before running the backup; the script writes
+`<dump>.gpg`, removes the plaintext and checksums the ciphertext. Upload only
+the ciphertext plus `.sha256` to storage in a different account/region; keep the
+private key/passphrase offline. Set `BACKUP_RETENTION_DAYS` to prune old
+`wpay-*` artifacts. Managed Postgres PITR is still required for RPO in minutes.
 
 ## 3. Images
 
@@ -235,7 +275,9 @@ stored cursors, then runs settlement automation in the configured mode
 The repository secret is configured and a manual dispatch on 2026-11-13
 returned `ok:true` across all 16 contracts. The hosted function predates the
 settlement-automation code and migration 0008, so those steps only take effect
-after the owner redeploys and migrates. Lag is minutes rather than the day
+after the owner redeploys and migrates. A check on 2026-11-22 confirmed the
+stale build: `GET /v1/admin/settlements/automation` returns `404 NOT_FOUND`,
+while `/v1/health` and `/v1/health/ready` remain `200`. Lag is minutes rather than the day
 a Vercel-only cron would leave; real-time behaviour still needs the
 Compose/Kubernetes workers. Health still reports
 `database: "up"` because it checks the connection, not worker liveness. Refund

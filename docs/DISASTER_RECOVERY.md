@@ -11,53 +11,111 @@
 
 These are targets, not production measurements. The logical restore drill has
 been executed locally through the Docker fallback (no local `pg_restore`), so it
-skipped archive TOC validation; it restored every public table, compared all row
-counts plus the applied `_prisma_migrations` set and matched 8 migrations in
-about 1 second including scratch database creation. The workflow's verify job
-runs `pg_restore --list`, but the workflow itself has not run. This is not a
-measure of production RTO, and failover/PITR recovery has not been measured.
+skipped archive TOC validation; on 2026-11-22 it restored every public table
+(21 tables plus `_prisma_migrations`), compared all row counts and the applied
+`_prisma_migrations` set, and matched all 8 migrations after AES-256 decryption.
+The workflow's verify job runs `pg_restore --list` and compares the restored
+migration set with the manifest captured at dump time, but the workflow itself
+has not run. This is not a measure of production RTO, and failover/PITR recovery
+has not been measured.
 
 ## Backups
 
 - `.github/workflows/backup.yml` is configured to take a daily custom-format
-  `pg_dump` of the production database (`DATABASE_URL` secret), write a SHA-256
-  sidecar, record a full table-count manifest plus metadata and upload them as a
-  30-day artifact. Its verify job validates the archive TOC
-  (`pg_restore --list`) after decryption.
-- **Current state (2026-11-13):** the scheduled run fails closed at the dump
-  step because the `DATABASE_URL` repository secret is not configured (run
-  43401586650), so no automatic production backup has been taken yet. Add
-  `DATABASE_URL` to enable the daily dump and restore verification.
+  `pg_dump` of the production database, encrypt it with AES-256 before upload,
+  write a SHA-256 sidecar, and record a full table-count manifest, the exact
+  applied migration list and metadata as artifacts retained for 30 days.
+- **Current state (2026-11-22): production backup is BLOCKED.** The last
+  scheduled run (`45008774752`, commit `9f0fd10`) failed at preflight because
+  the `production` environment has no `DATABASE_URL`. The environment exists but
+  has no protection rules. The workflow now also requires
+  `BACKUP_GPG_PASSPHRASE` and refuses to create an unencrypted dump. Neither
+  secret is readable with the current token, so no production backup has been
+  taken. The hardened workflow (mandatory encryption, exact migration-set
+  comparison, failure alert) has not yet run on GitHub. The 2026-11-22 local
+  drill passed and is recorded above, but it is not production evidence.
+- The workflow has four jobs:
+  - **backup**: preflight, dump, encryption, row-count manifest, migration
+    manifest, metadata, artifact upload.
+  - **verify-backup**: checksum, decrypt, `pg_restore --list`, restore into an
+    ephemeral Postgres, compare every table count and the exact applied
+    migration set, then fail on any mismatch.
+  - **restore-drill**: migrates and seeds a separate ephemeral Postgres, backs it
+    up through `scripts/db-backup.sh` with a throwaway CI-only passphrase, then
+    restores through `scripts/db-restore-drill.sh`. It has no dependency on the
+    production dump or production secrets, so it validates encryption,
+    checksums and restore even when production secrets are absent.
+  - **notify-failure**: on any failed job, opens or comments on a single
+    `Scheduled database backup failed` issue with the run link, job results and
+    the required secret names. It never prints secret values.
+- Preflight fails closed when `DATABASE_URL`, `BACKUP_GPG_PASSPHRASE`, `pg_dump`,
+  `psql` or `gpg` is missing. A plaintext production dump is never uploaded.
 - `scripts/db-backup.sh` always writes a `.sha256` sidecar and rejects an empty
-  or unreadable custom-format archive before publishing it.
-- Encryption is optional but recommended for off-site copies:
-  - `BACKUP_GPG_RECIPIENT` uses a GPG public key (private key stays offline).
-  - `BACKUP_GPG_PASSPHRASE` uses symmetric AES-256 with a loopback passphrase
-    (use a long, randomly generated secret stored in the workflow secret
-    store).
-  Both modes write `<dump>.gpg`, remove the plaintext dump and checksum the
-  ciphertext. A local encrypted backup was produced and restored successfully
-  on 2026-11-22, and the workflow's optional `BACKUP_GPG_PASSPHRASE` path is
-  exercised by the restore-drill job.
+  or unreadable custom-format archive before publishing it. `pg_restore --list`
+  validates the archive TOC when the client is installed.
+- Encryption modes:
+  - `BACKUP_GPG_PASSPHRASE` uses symmetric AES-256 with a loopback passphrase.
+    This is the mode the CI workflow uses because the same secret can decrypt
+    for automatic verification.
+  - `BACKUP_GPG_RECIPIENT` uses a GPG public key and keeps the private key
+    offline. It is supported by the script for manual/off-site copies, but the
+    CI verify job cannot decrypt recipient-only backups; providing the private
+    key to GitHub Actions is not recommended.
+  - Both modes write `<dump>.gpg`, remove the plaintext dump and checksum the
+    ciphertext. An encrypted round-trip and retention pruning were verified
+    locally on 2026-11-22; the workflow's encryption path has not run against
+    production.
 - `BACKUP_RETENTION_DAYS` prunes only `wpay-*.dump`, `.dump.gpg` and their
   `.sha256` sidecars older than the cutoff in the output directory. It does not
-  touch unrelated files.
-- The workflow has three jobs: **backup** (dump, manifest, metadata, artifact),
-  **verify** (checksum, decrypt, TOC, restore, all-table count comparison), and
-  **restore-drill** (backup a freshly migrated/seeded database, then run the
-  restore script against the dump). The restore-drill job has no dependency on
-  the production dump, so it still validates the scripts when the `DATABASE_URL`
-  secret is absent. All jobs fail closed on checksum, decryption or count
-  mismatch.
-- GitHub Actions artifacts are private to the repository but are **not**
-  encrypted unless the backup itself was. Production off-site replication should
-  run `backup.sh` with encryption and upload only the ciphertext plus `.sha256`
-  to storage in a different region/account; the private key or passphrase stays
-  offline.
+  touch unrelated files. The workflow does not configure retention pruning
+  because artifacts are already retained for 30 days.
+- GitHub Actions artifacts are private to the repository but are **not** a
+  substitute for encrypted off-site storage. Production off-site replication
+  should upload only the ciphertext plus `.sha256` to storage in a different
+  region/account; the passphrase stays in the secret store and an offline
+  password manager.
 - This is logical backup only. Managed Postgres continuous WAL archiving/PITR is
   still required in production and is not configured by this repository.
 - Contract state does **not** need a backup: it is on the ledger. What matters is
   the ability to rebuild the projection from events.
+
+### Enabling production backups
+
+An operator with repository administration and the `production` environment must
+do this once:
+
+1. Create or confirm the `production` environment under **Settings >
+   Environments**. Set **Deployment branches** to `main` so other branches cannot
+   read its secrets.
+2. Create a least-privilege database role for backups (read-only is sufficient
+   for `pg_dump`; use provider-specific read roles where available) and copy its
+   connection string, including TLS parameters required by the provider.
+3. Generate a long random passphrase and store it in an offline password manager.
+   Do not commit it or paste it into an issue:
+   ```bash
+   openssl rand -base64 48
+   ```
+4. Store both values as **environment** secrets, not repository secrets,
+   because the workflow declares `environment: production`. `gh secret set`
+   prompts without echoing the value:
+   ```bash
+   gh secret set DATABASE_URL --env production
+   gh secret set BACKUP_GPG_PASSPHRASE --env production
+   ```
+   The same `BACKUP_GPG_PASSPHRASE` value must remain available for restore
+   verification and any later restore from these artifacts.
+5. Run the workflow manually and wait for all jobs:
+   ```bash
+   gh workflow run backup.yml --ref main
+   gh run watch
+   ```
+   Acceptance: `backup`, `verify-backup` and `restore-drill` succeed; the
+   artifact contains only `wpay.dump.gpg`, its `.sha256`, `manifest.txt`,
+   `migrations.txt` and `backup-metadata.txt`; the verify log reports matching
+   row counts and `OK migrations=<count> applied`.
+6. Only after that run succeeds may the production backup item be marked PASS.
+   A local drill or a green `restore-drill` job alone does not prove that the
+   production database can be backed up or restored.
 
 ## Rebuild the projection
 

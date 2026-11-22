@@ -94,10 +94,10 @@ built once by `tests/playwright/prepare.mjs`:
 - **admin** (2): signs in, shows health and indexer failure counts; a `USER`
   account is refused operator access.
 
-Measured 2026-11-20: 9 passed (1.6 min, after installing Chromium and its system
-libraries). The CI `browser` job runs the same suite. These tests exercise the UI
-and wallet adapter contract; they do not load the real Freighter extension or
-submit to Testnet.
+Measured 2026-11-22: 9 passed (2.1 min, Playwright 1.65 with the cached
+Chromium build). The CI `browser` job runs the same suite. These tests exercise
+the UI and wallet adapter contract; they do not load the real Freighter
+extension or submit to Testnet.
 
 ## Soroban resource measurements
 
@@ -160,7 +160,36 @@ balances, and the `payment` event contents. Results are recorded in
 `deployments/testnet-e2e.json`; re-running verifies the recorded payment instead
 of creating a second one.
 
+The isolated invoice suite is separate from the 16-contract record:
+
+```bash
+DEPLOYMENTS_FILE=deployments/testnet-invoice-deployments.json \
+SECRET_FILE=.env.testnet-invoice.local \
+CONTRACTS=feeManager,merchantRegistry,paymentRouter,invoiceManager,settlementManager \
+node scripts/deploy-testnet.cjs
+
+NODE_PATH=packages/sdk/node_modules node scripts/e2e-invoice-testnet.cjs
+```
+
+It deploys five contracts, creates a test SAC, registers and approves a
+merchant, creates invoice `2`, pays it, and verifies the `invoice`, `payment`
+and `paid` events plus exactly equal balance deltas. It then exercises two
+settlement windows, an underfunded simulation rejection and a duplicate
+execution rejection. Results are in
+`deployments/testnet-invoice-e2e.json`. Negative cases and their limitations are
+listed in [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md#negative-tests-2026-11-22).
+
+The same events were replayed into a scratch Postgres database and processed by
+the real API indexer and settlement worker in `execute` mode. That run created
+and executed automation window `4` with four `SUCCESS` Soroban transactions,
+resolved four expected dead letters through the operator endpoint, and a stable
+second pass inserted nothing and created no duplicate. The record is
+`deployments/testnet-invoice-automation.json`. This was a supervised local API
+process against Testnet, not the hosted Vercel deployment.
+
 This is Testnet only. It is not a mainnet test and does not constitute an audit.
+The payment was signed by generated keypairs through the SDK, not by the real
+Freighter extension.
 
 ## Load test
 
@@ -190,19 +219,32 @@ POSTGRES_PASSWORD=... pnpm db:restore-drill
 warns when only the Docker fallback is available), creates a scratch database,
 restores the dump, compares row counts for every public table dynamically and
 compares the applied `_prisma_migrations` set, then always drops the scratch
-database. It passes locally against the compose Postgres in about 1 second for
-the seeded fixture (8 migrations), including AES-256 decryption; the local run
-skipped TOC validation because `pg_restore` is not installed.
-`.github/workflows/backup.yml` runs a daily production dump, restores it into an
-ephemeral Postgres and compares every row count with the manifest captured at
-dump time; its verify job runs `pg_restore --list`. Set
-`BACKUP_GPG_RECIPIENT` for public-key encryption or `BACKUP_GPG_PASSPHRASE` for
-symmetric AES-256; `scripts/db-backup.sh` writes `<dump>.gpg`, deletes the
-plaintext and writes a ciphertext `.sha256`. The drill decrypts either form.
-Encrypted round-trip and retention pruning were verified locally on 2026-11-22.
-The production backup/verify jobs have not run because `DATABASE_URL` is absent;
-the independent `restore-drill` job runs against an ephemeral Postgres but the
-updated workflow has not run on GitHub yet.
+database. A clean local run on 2026-11-22 against the stable test database
+restored all 21 public tables plus `_prisma_migrations`, matched all eight
+applied migrations, and passed after AES-256 passphrase decryption. The backup
+ciphertext SHA-256 was `c30370a3726d98d260fb91a1125a3e2197256383ccd59b9b2a4928c8f9ce5eda`.
+The local run still skipped TOC validation because `pg_restore` is not installed;
+the workflow verify job performs it.
+`.github/workflows/backup.yml` runs a daily production dump, fails preflight
+unless `DATABASE_URL` and `BACKUP_GPG_PASSPHRASE` are configured as `production`
+environment secrets, restores the encrypted dump into an ephemeral Postgres and
+compares every row count and the exact applied migration set with the manifests
+captured at dump time; its verify job runs `pg_restore --list`. The
+`restore-drill` job is independent of production and exercises the scripts
+against a migrated/seeded database. A `notify-failure` job opens or updates one
+`Scheduled database backup failed` issue with job results and the required
+secret names, never their values. For manual copies, `BACKUP_GPG_RECIPIENT`
+(public-key) or `BACKUP_GPG_PASSPHRASE` (symmetric AES-256) is supported;
+`scripts/db-backup.sh` writes `<dump>.gpg`, deletes the plaintext and writes a
+ciphertext `.sha256`. The drill decrypts either form. Encrypted round-trip and
+retention pruning were verified locally on 2026-11-22.
+The production backup/verify jobs have not run because `DATABASE_URL` and
+`BACKUP_GPG_PASSPHRASE` are absent from the production environment. The last
+scheduled run (`45008774752`, commit `9f0fd10`) failed at preflight with
+`DATABASE_URL secret is not configured`. The independent `restore-drill` job
+runs against an ephemeral Postgres, but the hardened workflow (mandatory
+encryption, migration-set comparison, failure issue) has not run on GitHub yet.
+A local drill is not a production backup.
 
 ## Build and type checks
 
@@ -252,17 +294,23 @@ keyless OIDC, then verifies signatures before Helm upgrade.
 
 - Mainnet execution, real funds, or any external audit.
 - The real Freighter extension in a browser. The Playwright suite mocks the
-  provider; the adapter and signing helpers are unit tested.
-- Real-wallet Testnet submission from the browser (the API-side Testnet E2E is
-  recorded in `deployments/testnet-e2e.json`).
-- Real Freighter extension behaviour and any Mainnet operation.
+  provider; the adapter and signing helpers are unit tested. The Testnet invoice
+  run used generated keypairs through the SDK.
+- Real-wallet Testnet submission from the browser (the API-side Testnet E2E runs
+  are recorded in `deployments/testnet-e2e.json` and
+  `deployments/testnet-invoice-e2e.json`, but neither loads Freighter).
+- The hosted deployment running migration `0008` and the settlement-automation
+  routes: `GET /v1/admin/settlements/automation` returned `404` when checked on
+  2026-11-22. The automation Testnet run used a local API process.
+- A production backup: the local encrypted restore drill passes, but the
+  scheduled workflow fails closed for missing production secrets.
 - Cluster deployment, live Prometheus scraping/alert delivery, Argo sync, image
   signing and the deploy workflow, which require infrastructure credentials.
 - Long-running incident drills and chaos scenarios; backup/restore and encrypted
   backup round-trips are automated, but failover RTO/RPO is not measured.
 
-The latest recorded remote green run is commit `575012f` (2026-11-22): CI run
-45066533798 and Security run 45066533736 succeeded, including the Soroban
+The latest recorded remote green run is commit `b9bdba4` (2026-11-22): CI run
+45067193267 and Security run 45067193233 succeeded, including the Soroban
 `clippy -D warnings` gate, 140 Rust tests, both resource benchmarks, the WASM
 build, TypeScript workspace, browser wallet flow, indexer/API container builds,
 k6 load test, CodeQL, Trivy, Gitleaks and the dependency audit. All 11 check runs

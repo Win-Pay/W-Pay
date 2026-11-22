@@ -23,7 +23,7 @@
 
 | Threat | Impact | Mitigation | Status |
 | --- | --- | --- | --- |
-| Forged payment confirmation | Merchant ships goods unpaid | `confirm` verifies the transaction result on-chain; indexer reconciles from events | Implemented; exercised on Testnet (one settled payment, bogus hash and mismatched amount rejected) |
+| Forged payment confirmation | Merchant ships goods unpaid | `confirm` verifies the transaction result on-chain; indexer reconciles from events | Implemented; exercised on Testnet (historical payment plus invoice `2` payment `22f24058…37dd`; bogus hash and mismatched amount rejected) |
 | Replay of signed transaction | Double spend | Stellar sequence numbers + contract idempotency per payment id | Implemented |
 | Unauthorized refund | Funds drained to attacker | Refund approval requires merchant settlement address; amount capped at gross | Implemented + tested |
 | Fee manipulation | Merchant overcharged | Fee cap enforced in fee manager and router; admin-only writes; events emitted | Implemented + tested |
@@ -37,10 +37,10 @@
 | Rate-limit bypass | DoS/brute force | Per-IP limiter | Redis-backed when `REDIS_URL` is set; per-process fallback otherwise (quota multiplies per replica) |
 | Indexer poisoning | False state | Only contract events for configured ids are accepted; upserts idempotent; ambiguous projections are dead-lettered and never guessed | Implemented + tested |
 | Supply chain | Backdoor | Lockfile, pnpm build allow-list, CodeQL, Trivy, gitleaks, dependency review | Configured in CI |
-| Admin key compromise | Full control | Recommend multisig, delayed upgrade, pause | Process control, not code |
+| Admin key compromise | Full control | Recommend multisig, delayed upgrade, pause | **Not implemented/configured.** Single throwaway Testnet key; multisig is protocol-compatible but no multisig account or hardware wallet is configured. See [AUDIT.md](AUDIT.md#multisig-hardware-wallets-and-timelocks) |
 | Cross-origin credential abuse | Token theft via hostile origin | CORS allowlist (`WEB_PUBLIC_URL` + explicit `CORS_ORIGINS`); localhost only outside production | Implemented |
-| Backup disclosure | Off-chain data leak | Client-side GPG encryption for off-site copies; plaintext GitHub artifacts are repository-private | Implemented; scheduling off-site upload is an operator task |
-| Malicious upgrade | Contract takeover | Upgrade manager requires proposal + delay + authority | Implemented; delay values must be configured |
+| Backup disclosure | Off-chain data leak | Client-side GPG encryption for off-site copies; plaintext GitHub artifacts are repository-private | Implemented in scripts/workflow; **no production backup exists** because the `production` environment lacks `DATABASE_URL` and `BACKUP_GPG_PASSPHRASE` |
+| Malicious upgrade | Contract takeover | Upgrade manager requires proposal + delay + authority | Implemented only for the manager's own WASM; other contracts have no upgrade entry point. Delay values not verified in the Testnet records |
 
 ## Trust boundaries
 
@@ -61,8 +61,11 @@
 
 ## Residual risks
 
-Unaudited contracts, centralized admin powers, and no operational track record.
-Testing is limited to the Soroban host, a single Testnet deployment, local load
-and mocked-browser tests; there is no mainnet, failover or real-extension test
-result. Do not handle real value without an independent audit and a staged
-rollout.
+Unaudited contracts, single-key administration, no hardware wallet/multisig
+ceremony, no hosted migration/API deployment, no production backup, and no
+operational track record. Testing is limited to the Soroban host, Testnet runs
+(including an isolated invoice/settlement/automation flow), local load tests and
+mocked-browser tests; there is no mainnet, failover, real-extension or
+production-restore result. Do not handle real value without an independent audit
+and a staged rollout. The audit hand-off package, including privileged entry
+points and open questions, is in [AUDIT.md](AUDIT.md#independent-soroban-audit-package).

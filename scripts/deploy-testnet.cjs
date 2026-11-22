@@ -29,8 +29,8 @@ const {
 
 const ROOT = path.resolve(__dirname, "..");
 const WASM_DIR = path.join(ROOT, "packages/contracts/target/wasm32v1-none/release");
-const OUT_FILE = path.join(ROOT, "deployments/testnet.json");
-const SECRET_FILE = path.join(ROOT, ".env.testnet.local");
+const OUT_FILE = path.resolve(ROOT, process.env.DEPLOYMENTS_FILE ?? "deployments/testnet.json");
+const SECRET_FILE = path.resolve(ROOT, process.env.SECRET_FILE ?? ".env.testnet.local");
 const RPC_URL = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const FRIENDBOT = "https://friendbot.stellar.org";
 const NETWORK_PASSPHRASE = Networks.TESTNET;
@@ -53,6 +53,17 @@ const CONTRACTS = [
   ["governance", "wpay_governance"],
   ["impactNft", "wpay_impact_nft"],
 ];
+
+const ONLY = (process.env.CONTRACTS ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean);
+const TARGETS = ONLY.length
+  ? CONTRACTS.filter(([name]) => ONLY.includes(name))
+  : CONTRACTS;
+if (ONLY.length && TARGETS.length !== ONLY.length) {
+  throw new Error(`unknown CONTRACTS entry: ${ONLY.join(",")}`);
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -139,7 +150,7 @@ async function main() {
   existing.deployedAt = existing.deployedAt ?? new Date().toISOString();
   existing.contracts = existing.contracts ?? {};
 
-  for (const [name, crate] of CONTRACTS) {
+  for (const [name, crate] of TARGETS) {
     const wasmPath = path.join(WASM_DIR, `${crate}.wasm`);
     if (!fs.existsSync(wasmPath)) throw new Error(`missing wasm: ${wasmPath}`);
     const wasm = fs.readFileSync(wasmPath);
@@ -183,8 +194,8 @@ async function main() {
     console.log(`   contract ${contractId} (deploy tx ${create.hash})`);
   }
 
-  const count = Object.values(existing.contracts).filter((entry) => entry.contractId).length;
-  console.log(`\n${count}/${CONTRACTS.length} contracts deployed on testnet.`);
+  const count = TARGETS.filter(([name]) => existing.contracts[name]?.contractId).length;
+  console.log(`\n${count}/${TARGETS.length} selected contracts deployed on testnet.`);
   console.log(`recorded in ${path.relative(ROOT, OUT_FILE)}`);
 }
 

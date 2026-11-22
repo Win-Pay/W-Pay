@@ -1,12 +1,21 @@
 # Contributor backlog
 
-These are scoped tasks derived from the current code and known gaps. They are
-**not** filed as GitHub issues and no one is assigned. Open one with the
+These are scoped tasks derived from the current code and known gaps. Items 1
+and 2 below are completed and retained for context. Three genuine follow-up
+tasks are filed remotely as issues
+[#1](https://github.com/Win-Pay/W-Pay/issues/1),
+[#2](https://github.com/Win-Pay/W-Pay/issues/2) and
+[#3](https://github.com/Win-Pay/W-Pay/issues/3). Open a new issue with the
 "Contributor task" template before starting substantial work so scope and
 ownership are visible. Do not claim a task is complete without the listed
 verification.
 
 ## 1. Test the settlement executor without a network
+
+**Status: completed (2026-11-22).** `apps/api/src/settlement-executor.test.ts`
+and the settlement service tests cover missing, partial, closed, executed and
+malformed windows, wrong token/payee and terminal mismatches. The real path was
+later also exercised on Testnet.
 
 **Background.** `apps/api/src/settlement-executor.ts` parses `get_window`
 results, computes missing entries, and submits `open`, `add_entry`, `close` and
@@ -30,8 +39,16 @@ success. No test requires Testnet or a real signer.
 
 ## 2. Add a supervised Testnet settlement drill
 
-**Background.** Automatic settlement is tested only with a fake executor. The
-repository has no repeatable, explicitly opt-in Testnet settlement proof.
+**Status: completed (2026-11-22).** `scripts/e2e-invoice-testnet.cjs` deploys an
+isolated suite, pays an invoice and runs settlement windows; the API maintenance
+run created and executed window `4`. Evidence is in
+`deployments/testnet-invoice-automation.json` and
+[TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md). It is opt-in and never prints
+secrets. A remaining follow-up is to make the API-side run a single portable
+script rather than a documented manual sequence.
+
+**Background.** Automatic settlement was originally tested only with a fake
+executor. The repository now has an opt-in Testnet proof, recorded above.
 
 **Scope.** Add a script that refuses any network other than Testnet, requires a
 funded operator and explicit confirmation, creates a small batch, opens/adds/
