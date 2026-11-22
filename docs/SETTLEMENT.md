@@ -192,8 +192,9 @@ with the chain.
 ## What is verified
 
 - Contract state transitions and authorization are covered by Rust unit tests;
-  CI runs `cargo test` plus the ignored local resource benchmark. They have not
-  been re-run in this workspace because no Rust toolchain is installed here.
+  the full `cargo test` suite (140 tests, including the resource benchmarks) and
+  the WASM build passed locally on rustc 1.100.0 (2026-11-22). Live Testnet
+  execution is still not verified.
 - API creation, linking, intent construction and authorization are covered by
   the Postgres integration suite (`apps/api/src/postgres.integration.test.ts`).
 - Automatic claiming, refund aggregation, hold exclusion, success, failure

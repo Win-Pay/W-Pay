@@ -40,7 +40,7 @@ fn missing_key_is_not_found() {
 
 #[test]
 fn type_mismatch_is_reported() {
-    let (env, client, admin) = setup();
+    let (_, client, admin) = setup();
     client.set(
         &admin,
         &ConfigKey::MinPaymentAmount,

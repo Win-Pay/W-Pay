@@ -293,13 +293,15 @@ Verified locally:
   counts and 8 applied migrations matched; retention pruning removed only WPay
   artifacts. Archive TOC validation is configured but was skipped locally
   because `pg_restore` is not installed; the backup workflow has not run.
+- Rust on rustc 1.100.0: `cargo fmt --check`, `cargo clippy --all-targets -- -D
+  warnings`, `cargo test` (140 passed, including both resource benchmarks) and
+  the 16-contract WASM build all pass.
 - Workflow YAML parses; `bash -n scripts/*.sh` passes.
 
 Not verified / BLOCKED:
 
-- Rust remains unavailable in this environment. `cargo fmt`, `clippy`, tests,
-  resource benchmarks and WASM rebuild were not run here. The 140-test figure is
-  historical and CI additions have not run on GitHub.
+- The GitHub CI and Security reruns for the clippy/workflow fixes have not been
+  observed yet.
 - No Testnet settlement execution. The automatic suite uses a fake executor and
   does not prove live signing, RPC parsing or pool funding.
 - The hosted Neon database still has 7 migrations, and the hosted API predates

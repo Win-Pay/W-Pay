@@ -46,21 +46,11 @@ jobs:
       - uses: github/codeql-action/autobuild@v3
       - uses: github/codeql-action/analyze@v3
 
-  dependencies:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-
-  # dependency-review-action only runs on pull requests, so pushes to main and
-  # the weekly schedule get an explicit lockfile audit instead of a silent skip.
+  # Dependency review runs only on pull requests (see dependency-review.yml).
+  # Every event also gets an explicit lockfile audit, so pushes and the weekly
+  # schedule do not depend on a PR-only check.
   dependency-audit:
-    name: Dependency audit (push and schedule)
-    if: github.event_name != 'pull_request'
+    name: Dependency audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -1,0 +1,20 @@
+name: Dependency review
+
+# actions/dependency-review-action only supports pull requests, so it lives in
+# its own workflow instead of appearing as a skipped job on every push to main.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

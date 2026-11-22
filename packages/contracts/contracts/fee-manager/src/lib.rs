@@ -11,6 +11,9 @@
 //!   consumed by settlement, this contract moves no funds.
 
 #![no_std]
+// Events::publish is deprecated in SDK 29, but its tuple topics and data are
+// the event schema the indexer consumes; migrate events and the decoder together.
+#![allow(deprecated)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
 use wpay_common::{access, validation, Error, FeeSplit, Role};
@@ -113,7 +116,7 @@ impl FeeManager {
     }
 
     /// Pure split calculation, useful for quoting before a payment exists.
-    pub fn quote(env: Env, amount: i128, bps: u32) -> Result<FeeSplit, Error> {
+    pub fn quote(_env: Env, amount: i128, bps: u32) -> Result<FeeSplit, Error> {
         validation::require_positive(amount)?;
         validation::require_bps(bps, MAX_FEE_BPS)?;
         split(amount, bps)

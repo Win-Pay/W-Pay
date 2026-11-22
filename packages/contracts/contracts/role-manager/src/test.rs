@@ -23,7 +23,7 @@ fn initialize_sets_only_admin() {
 
 #[test]
 fn double_initialize_is_rejected() {
-    let (env, client, admin) = setup();
+    let (_, client, admin) = setup();
     let result = client.try_initialize(&admin);
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }

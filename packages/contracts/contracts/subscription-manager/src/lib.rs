@@ -23,6 +23,9 @@
 //!   contract never keeps funds it is not owed.
 
 #![no_std]
+// Events::publish is deprecated in SDK 29, but its tuple topics and data are
+// the event schema the indexer consumes; migrate events and the decoder together.
+#![allow(deprecated)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
 use wpay_common::{

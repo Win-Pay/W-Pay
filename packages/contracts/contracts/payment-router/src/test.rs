@@ -6,7 +6,6 @@ use merchant_registry::MerchantRegistryClient;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::Env;
-use wpay_common::Merchant;
 
 struct World {
     env: Env,

@@ -24,6 +24,9 @@
 //!   existance check; the API verifies the account before submitting.
 
 #![no_std]
+// Events::publish is deprecated in SDK 29, but its tuple topics and data are
+// the event schema the indexer consumes; migrate events and the decoder together.
+#![allow(deprecated)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
 use wpay_common::{access, validation, Error, Role};
@@ -66,7 +69,7 @@ impl MerchantRegistry {
         owner.require_auth();
         wpay_common::pause::require_not_paused(&env)?;
         validation::require_bps(fee_bps, MAX_FEE_BPS)?;
-        if name.len() == 0 || name.len() > MAX_NAME_LEN {
+        if name.is_empty() || name.len() > MAX_NAME_LEN {
             return Err(Error::InvalidInput);
         }
         if env
