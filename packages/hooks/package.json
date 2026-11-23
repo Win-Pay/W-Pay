@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@stellar/freighter-api": "6.0.1",
     "@wpay/sdk": "workspace:*",
     "@wpay/types": "workspace:*"
   },

@@ -189,6 +189,47 @@ with the chain.
    short. Check `SettlementManager.pool(token)` against the window total before
    asking an operator to sign.
 
+## Metrics
+
+`GET /v1/health/metrics` exposes the existing payment/invoice/refund/merchant
+gauges plus settlement automation metrics. Every label is a bounded enum
+(`status`, `outcome`, `reason`, `check`, `mode`); wallet addresses, merchant
+names, memos, transaction hashes and raw error text are never used as labels.
+The settlement values are derived from Postgres at scrape time, so they are
+consistent across serverless instances and survive cold starts.
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `wpay_settlement_eligible_payments` | gauge | Settled payments with unallocated net above zero after the hold period |
+| `wpay_settlement_pending_windows{status="OPEN\|CLOSED"}` | gauge | Automatic batches still awaiting execution |
+| `wpay_settlement_oldest_pending_age_seconds` | gauge | Age of the oldest pending automatic batch |
+| `wpay_settlement_automation_runs_total{outcome="success\|failure"}` | gauge | Executed automatic batches, and batches currently in backoff |
+| `wpay_settlement_retries_total{reason=…}` | gauge | Failed attempts grouped by bounded reason (`insufficient_pool`, `rpc_unavailable`, `state_mismatch`, `budget_exceeded`, `cancelled`, `other`) |
+| `wpay_settlement_last_success_timestamp_seconds` | gauge | Last executed automatic batch (`0` when none) |
+| `wpay_settlement_execution_duration_seconds` | summary | Creation-to-execution duration for the last 500 executed batches |
+| `wpay_settlement_reconciliation_failures{check=…}` | gauge | Executed window without a tx, paid invoice without a payment, settled payment without a contract link, plus `total` |
+| `wpay_settlement_automation_enabled{mode="off\|prepare\|execute"}` | gauge | Configured automation mode |
+| `wpay_settlement_worker_up` | gauge | `0` only when automation is deliberately off |
+| `wpay_api_indexer_checkpoint_age_seconds` / `_up` | gauge | API-side indexer freshness (never gates readiness) |
+| `wpay_api_indexer_unresolved_failures` / `_checkpoints` | gauge | Durable dead letters and checkpoint count |
+
+The indexer keeps its own `wpay_indexer_last_run_timestamp_seconds` and
+`wpay_indexer_unresolved_failures` metrics; the API-side names are prefixed
+with `wpay_api_` so both series can be scraped without collisions.
+
+Alert rules in `monitoring/alerts.yml` cover a two-hour pending batch, batches
+in backoff for 30 minutes, and any reconciliation inconsistency for 15 minutes.
+The Grafana dashboard `monitoring/grafana-dashboard.json` has panels for the
+backlog, age, failure reasons, run outcomes and p95 execution duration.
+
+```bash
+curl -s "$API/v1/health/metrics" | grep wpay_settlement_
+```
+
+`wpay_settlement_last_success_timestamp_seconds` staying at `0` while batches
+exist means automation has never completed a batch; check the mode, the executor
+key and `/v1/admin/settlements/automation`.
+
 ## What is verified
 
 - Contract state transitions and authorization are covered by Rust unit tests;

@@ -1,22 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PublicInvoiceRecord } from "@wpay/types";
 import { Alert, Badge, Brand, Button, Card, Field, Input, statusTone } from "@wpay/ui";
 import {
   assertFreighterNetwork,
+  connectFreighter,
   formatAmount,
   useSession,
   type FreighterLike,
 } from "@wpay/hooks";
-
-function freighter(): FreighterLike | null {
-  if (typeof window === "undefined") return null;
-  const candidate = (window as unknown as Record<string, unknown>).freighterApi ??
-    (window as unknown as Record<string, unknown>).freighter;
-  return (candidate as FreighterLike) ?? null;
-}
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
@@ -54,6 +48,7 @@ export default function CheckoutPage(): React.ReactElement {
   const [number, setNumber] = useState("");
   const [invoice, setInvoice] = useState<PublicInvoiceRecord | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
+  const walletProvider = useRef<FreighterLike | null>(null);
   const [networkPassphrase, setNetworkPassphrase] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -108,25 +103,21 @@ export default function CheckoutPage(): React.ReactElement {
 
   async function connect(): Promise<void> {
     setError(null);
-    const walletApi = freighter();
-    if (!walletApi) {
-      setError(
-        "No Stellar wallet detected. Install the Freighter browser extension, then reload this page.",
-      );
-      return;
-    }
+    setBusy(true);
     try {
-      const value = walletApi.getAddress
-        ? await walletApi.getAddress().then((result) => (typeof result === "string" ? result : result.address))
-        : await walletApi.getPublicKey?.();
-      if (!value) throw new Error("wallet did not return an address");
-      setWallet(value);
+      const connected = await connectFreighter();
+      walletProvider.current = connected.wallet;
+      setWallet(connected.address);
     } catch (cause) {
+      walletProvider.current = null;
       setError(cause instanceof Error ? cause.message : "could not connect wallet");
+    } finally {
+      setBusy(false);
     }
   }
 
   function disconnect(): void {
+    walletProvider.current = null;
     setWallet(null);
     setPhase("idle");
     setError(null);
@@ -143,16 +134,23 @@ export default function CheckoutPage(): React.ReactElement {
     setTxHash(null);
     setLedger(null);
     try {
-      const walletApi = freighter();
-      if (!walletApi || !wallet) throw new Error("connect a wallet first");
+      let walletApi = walletProvider.current;
+      let payer = wallet;
+      if (!walletApi || !payer) {
+        const connected = await connectFreighter();
+        walletProvider.current = connected.wallet;
+        walletApi = connected.wallet;
+        payer = connected.address;
+        setWallet(payer);
+      }
 
       setPhase("signing");
-      const intent = await api.invoices.payIntent(invoice.number, wallet);
+      const intent = await api.invoices.payIntent(invoice.number, payer);
       setNetworkPassphrase(intent.networkPassphrase);
       await assertFreighterNetwork(intent.networkPassphrase, walletApi);
       const signed = await walletApi.signTransaction(intent.xdr, {
         networkPassphrase: intent.networkPassphrase,
-        address: wallet,
+        address: payer,
       });
 
       setPhase("submitting");

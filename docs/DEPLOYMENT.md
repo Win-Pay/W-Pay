@@ -200,6 +200,14 @@ Expected: `/v1/health` returns `database: "up"`, `soroban: "up"` (the API calls
 returns `503`. If contracts are empty, stop: the deployment is incomplete and
 payment intents will return 503.
 
+`/v1/health/metrics` also exposes the settlement automation series described in
+[SETTLEMENT.md](SETTLEMENT.md#metrics): eligible payments, pending batches and
+their age, run outcomes, retries by bounded reason, execution duration,
+reconciliation failures, automation mode and API-side indexer freshness. Alert
+rules for a two-hour backlog, batches in backoff and reconciliation
+inconsistencies are in `monitoring/alerts.yml`. The hosted API only returns these
+series after this code is deployed; the 2026-11-22 hosted build does not.
+
 Operator checks:
 
 ```bash

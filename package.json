@@ -22,6 +22,8 @@
     "db:backup": "bash scripts/db-backup.sh",
     "db:restore-drill": "bash scripts/db-restore-drill.sh",
     "test:browser": "playwright test",
+    "test:e2e:freighter": "playwright test -c playwright.freighter.config.ts",
+    "seed:freighter": "node scripts/seed-freighter-e2e.mjs",
     "measure:testnet": "NODE_PATH=apps/api/node_modules node scripts/measure-testnet-resources.cjs"
   },
   "devDependencies": {

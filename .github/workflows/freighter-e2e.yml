@@ -1,0 +1,216 @@
+name: Freighter Testnet checkout (manual)
+
+# Opt-in real-extension checkout. This job is deliberately manual-only: it
+# downloads the official Freighter extension, creates a fresh wallet inside the
+# browser profile, funds it from Friendbot, pays a disposable Testnet invoice
+# through the extension, and verifies the PAID invoice and SETTLED payment in
+# the database.
+#
+# No wallet secret or recovery phrase exists in repository secrets. The wallet
+# is generated at runtime and discarded with the browser profile. Ordinary CI
+# never runs this workflow.
+#
+# Required repository configuration (all public values):
+#   vars.CONTRACT_PAYMENT_ROUTER_ID      isolated Testnet PaymentRouter id
+#   vars.CONTRACT_INVOICE_MANAGER_ID     isolated Testnet InvoiceManager id
+#   vars.CONTRACT_MERCHANT_REGISTRY_ID   isolated Testnet MerchantRegistry id
+#   vars.CONTRACT_SETTLEMENT_MANAGER_ID  isolated Testnet SettlementManager id
+#   vars.CONTRACT_FEE_MANAGER_ID         isolated Testnet FeeManager id
+#   vars.WPAY_FREIGHTER_MERCHANT_ADDRESS on-chain merchant 1 settlement address
+# Defaults are the recorded 2026-11-22 isolated deployment values.
+
+on:
+  workflow_dispatch:
+    inputs:
+      extension_url:
+        description: Optional URL of an unpacked Freighter build ZIP; empty uses the latest official release
+        required: false
+        default: ""
+      invoice_amount:
+        description: Invoice amount in stroops
+        required: false
+        default: "10000000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freighter-e2e
+  cancel-in-progress: false
+
+jobs:
+  checkout:
+    name: Real Freighter checkout on Testnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: wpay
+          POSTGRES_PASSWORD: wpay
+          POSTGRES_DB: wpay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wpay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://wpay:wpay@127.0.0.1:5432/wpay?schema=public
+      JWT_SECRET: freighter-e2e-local-secret-that-is-long-enough
+      STELLAR_NETWORK: testnet
+      STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+      API_PORT: "4100"
+      API_PUBLIC_URL: http://127.0.0.1:4100
+      WEB_PUBLIC_URL: http://127.0.0.1:3100
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:4100
+      SETTLEMENT_AUTOMATION: "off"
+      CONTRACT_PAYMENT_ROUTER_ID: ${{ vars.CONTRACT_PAYMENT_ROUTER_ID || 'CCH5OCHWK7FMVMAZKVTHORNVSWOBXJX5RM5U7KSBYQFG2AOTGXGL5NHM' }}
+      CONTRACT_INVOICE_MANAGER_ID: ${{ vars.CONTRACT_INVOICE_MANAGER_ID || 'CDNE2XG4A7D7XI7OW3G2KDCZAQDD4XHAVAPAHT2XKAZUI46WM3AJOOSV' }}
+      CONTRACT_MERCHANT_REGISTRY_ID: ${{ vars.CONTRACT_MERCHANT_REGISTRY_ID || 'CBPJKD3YEXZXSFGWGC77N3FNB2VDNIDXDVKCQJA54H7MQQ5HU5OEHXDI' }}
+      CONTRACT_SETTLEMENT_MANAGER_ID: ${{ vars.CONTRACT_SETTLEMENT_MANAGER_ID || 'CCSEVPCYVMDPW3ZM4CKFJZJ2Q464FJR7ONE62WM4AEW6XOEYKYASXW4J' }}
+      CONTRACT_FEE_MANAGER_ID: ${{ vars.CONTRACT_FEE_MANAGER_ID || 'CCNSHK7VXUK6646HMWFOPY7K3TEAHH6DSNTY2Z2KAHGBY4LZ76MODY7Y' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium and Xvfb dependencies
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Prisma generate and migrate
+        run: |
+          pnpm db:generate
+          pnpm --filter @wpay/database migrate
+
+      - name: Build API and checkout app
+        run: |
+          pnpm --filter @wpay/api... build
+          pnpm --filter @wpay/web... build
+
+      - name: Start API and checkout app
+        run: |
+          node apps/api/dist/main.js > /tmp/wpay-e2e-api.log 2>&1 &
+          echo $! > /tmp/wpay-e2e-api.pid
+          pnpm --filter @wpay/web exec next start -p 3100 > /tmp/wpay-e2e-web.log 2>&1 &
+          echo $! > /tmp/wpay-e2e-web.pid
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:4100/v1/health >/dev/null &&
+               curl -sf http://127.0.0.1:3100/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API or checkout app did not become ready"
+          tail -100 /tmp/wpay-e2e-api.log /tmp/wpay-e2e-web.log
+          exit 1
+
+      - name: Seed disposable Testnet invoices
+        run: |
+          set -euo pipefail
+          export WPAY_FREIGHTER_BOOTSTRAP=1
+          export WPAY_FREIGHTER_REGISTRY_ID=1
+          export WPAY_FREIGHTER_SETTLEMENT_ADDRESS="${{ vars.WPAY_FREIGHTER_MERCHANT_ADDRESS || 'GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ' }}"
+          export WPAY_FREIGHTER_AMOUNT="${{ inputs.invoice_amount }}"
+          OPEN_JSON="$(node scripts/seed-freighter-e2e.mjs)"
+          echo "$OPEN_JSON" | jq -e '.number and .amount'
+          echo "WPAY_FREIGHTER_INVOICE=$(echo "$OPEN_JSON" | jq -r .number)" >> "$GITHUB_ENV"
+          EXPIRED_JSON="$(WPAY_FREIGHTER_DUE_OFFSET_MINUTES=-5 node scripts/seed-freighter-e2e.mjs)"
+          echo "WPAY_FREIGHTER_EXPIRED_INVOICE=$(echo "$EXPIRED_JSON" | jq -r .number)" >> "$GITHUB_ENV"
+          echo "Seeded invoice ${{ inputs.invoice_amount }} stroops and one expired invoice"
+
+      - name: Download the official Freighter extension
+        env:
+          EXTENSION_URL: ${{ inputs.extension_url }}
+        run: |
+          set -euo pipefail
+          url="$EXTENSION_URL"
+          if [ -z "$url" ]; then
+            url="$(gh api repos/stellar/freighter/releases/latest \
+              --jq '.assets[] | select(.name | test("^build-.*\\.zip$")) | .browser_download_url' \
+              | head -n 1)"
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not resolve a Freighter release asset; pass extension_url."
+            exit 1
+          fi
+          mkdir -p /tmp/freighter-download /tmp/freighter
+          curl -fsSL "$url" -o /tmp/freighter-download/extension.zip
+          unzip -q /tmp/freighter-download/extension.zip -d /tmp/freighter
+          manifest="$(find /tmp/freighter -name manifest.json -print -quit)"
+          if [ -z "$manifest" ]; then
+            echo "::error::No manifest.json in the downloaded extension archive"
+            exit 1
+          fi
+          dirname "$manifest" > /tmp/freighter-path
+          echo "FREIGHTER_EXTENSION_PATH=$(cat /tmp/freighter-path)" >> "$GITHUB_ENV"
+          jq -r '.version' "$manifest" | sed 's/^/Freighter extension version: /'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Run the real-extension checkout
+        env:
+          WPAY_FREIGHTER_API_URL: http://127.0.0.1:4100
+          WPAY_FREIGHTER_APP_URL: http://127.0.0.1:3100
+          WPAY_FREIGHTER_MERCHANT_ADDRESS: ${{ vars.WPAY_FREIGHTER_MERCHANT_ADDRESS || 'GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ' }}
+          WPAY_FREIGHTER_HEADLESS: "false"
+          WPAY_FREIGHTER_EVIDENCE_FILE: deployments/freighter-e2e.json
+        # Extensions require a headed Chromium; Xvfb supplies the display.
+        run: xvfb-run -a pnpm test:e2e:freighter
+
+      - name: Assert the sanitized evidence is complete
+        if: always()
+        run: |
+          set -euo pipefail
+          file=deployments/freighter-e2e.json
+          if [ ! -f "$file" ]; then
+            echo "::error::$file was not written; the checkout did not reach verified settlement."
+            exit 1
+          fi
+          jq -e '
+            .network == "testnet" and
+            (.transaction.hash | test("^[0-9a-f]{64}$")) and
+            (.transaction.ledger > 0) and
+            .transaction.successful == true and
+            .checks.invoicePaid == true and
+            .checks.paymentSettled == true and
+            .checks.rpcConfirmed == true and
+            .database.checked == true and
+            .database.invoiceStatus == "PAID" and
+            .database.paymentStatus == "SETTLED"
+          ' "$file"
+          # The evidence must never contain a seed phrase or secret key.
+          if jq -r 'tostring' "$file" | grep -Eq 'S[A-Z2-7]{55}|seed phrase|secretKey'; then
+            echo "::error::Evidence appears to contain secret material and will not be uploaded."
+            exit 1
+          fi
+          jq '{network, wallet: {address: .wallet.address}, invoice: .invoice.number, transaction, checks, database}' "$file"
+
+      - name: Upload evidence and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freighter-testnet-evidence
+          path: |
+            deployments/freighter-e2e.json
+            playwright-report/freighter
+            test-results
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop local services
+        if: always()
+        run: |
+          kill "$(cat /tmp/wpay-e2e-api.pid)" 2>/dev/null || true
+          kill "$(cat /tmp/wpay-e2e-web.pid)" 2>/dev/null || true

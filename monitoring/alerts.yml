@@ -41,6 +41,36 @@ groups:
           summary: "W-Pay indexer has unresolved projection failures"
           description: "Events could not be projected for 15 minutes. Inspect /v1/admin/indexer/failures and reconcile before resolving."
 
+      - alert: WPaySettlementBacklog
+        expr: wpay_settlement_oldest_pending_age_seconds > 7200
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Automatic settlement has a batch older than 2 hours"
+          description: "A pending settlement window is ageing past the operational target. Inspect GET /v1/admin/settlements/automation and the pool balance."
+
+      - alert: WPaySettlementFailures
+        expr: wpay_settlement_automation_runs_total{outcome="failure"} > 0
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Automatic settlement batches are in backoff"
+          description: "One or more automatic batches failed. Check wpay_settlement_retries_total by reason, then /v1/admin/settlements/automation."
+
+      - alert: WPaySettlementReconciliationFailure
+        expr: wpay_settlement_reconciliation_failures{check="total"} > 0
+        for: 15m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Settlement database reconciliation is inconsistent"
+          description: "An executed window lacks a transaction, a paid invoice lacks a payment, or a settled payment lacks a contract link. Run GET /v1/admin/settlements/reconciliation before changing any state."
+
       - alert: WPayNoContractsConfigured
         expr: wpay_contracts_configured == 0
         for: 10m

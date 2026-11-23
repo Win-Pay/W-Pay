@@ -261,6 +261,17 @@ describe("SorobanService", () => {
       });
     });
 
+    it("serializes a bigint contract return value for JSON responses", async () => {
+      gateway.awaitTransaction.mockResolvedValueOnce({
+        status: "SUCCESS",
+        ledger: 42,
+        returnValue: { paymentId: 3n, nested: [7n] },
+      });
+      const result = await service.submit("signed-xdr");
+      expect(result.returnValue).toEqual({ paymentId: "3", nested: ["7"] });
+      expect(() => JSON.stringify(result)).not.toThrow();
+    });
+
     it("reports a failed submission without a return value", async () => {
       gateway.awaitTransaction.mockResolvedValueOnce({ status: "FAILED" });
       const result = await service.submit("signed-xdr");

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Address, Transaction, TransactionBuilder, rpc, scValToNative } from "@stellar/stellar-sdk";
 import { SorobanGateway, calls, keypairSigner, type WalletSigner } from "@wpay/sdk";
 import type { TransactionIntent } from "@wpay/types";
+import { serializeBigInts } from "./common";
 import { APP_CONFIG, type AppConfig } from "./config";
 
 export interface VerifiedPayment {
@@ -514,7 +515,8 @@ export class SorobanService {
       hash: submitted.hash,
       status: outcome.status,
       ledger: "ledger" in outcome ? outcome.ledger : undefined,
-      returnValue: outcome.status === "SUCCESS" ? outcome.returnValue : undefined,
+      returnValue:
+        outcome.status === "SUCCESS" ? serializeBigInts(outcome.returnValue) : undefined,
     };
   }
 }

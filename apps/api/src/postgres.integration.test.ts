@@ -1520,6 +1520,12 @@ describe.skipIf(!hasDatabase)("API against PostgreSQL", () => {
       expect(response.headers.get("content-type")).toContain("text/plain");
       const body = await response.text();
       expect(body).toContain("wpay_");
+      // Settlement automation gauges are derived from Postgres on every scrape.
+      expect(body).toContain("wpay_settlement_eligible_payments");
+      expect(body).toContain('wpay_settlement_pending_windows{status="OPEN"}');
+      expect(body).toContain("wpay_settlement_automation_runs_total{outcome=\"success\"}");
+      expect(body).toContain("wpay_settlement_reconciliation_failures{check=\"total\"}");
+      expect(body).toContain("wpay_api_indexer_unresolved_failures");
     });
 
     it("lists api keys without leaking the secret", async () => {

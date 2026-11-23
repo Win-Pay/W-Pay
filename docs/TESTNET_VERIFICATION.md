@@ -19,7 +19,7 @@ external audit.
 | Manual settlement windows | PASS (Testnet) | Windows 1 and 2 executed; underfunded and duplicate executions rejected |
 | Automatic settlement | PASS (Testnet, supervised) | API maintenance claimed payment, created and executed window 4 on chain |
 | Indexer catch-up and dead letters | PASS (local API + scratch Postgres) | Checkpoints advanced, projection applied, dead letters reviewed, second pass idempotent |
-| Whole checkout with real Freighter | NOT RUN | Generated test keypairs signed; the browser extension was not loaded |
+| Whole checkout with real Freighter | NOT RUN (harness ready) | Opt-in Playwright suite and `freighter-e2e.yml` workflow added 2026-11-23; not executed in this workspace |
 | Hosted API running this code | BLOCKED | `/v1/admin/settlements/automation` returns `404` on the hosted deployment |
 | Production backup workflow | BLOCKED | `production` environment has no `DATABASE_URL`; last scheduled run failed |
 | Independent audit | BLOCKED | No external audit has been performed |
@@ -208,7 +208,9 @@ variables from the isolated deployment, a funded settlement pool and
 
 ## Verify the hosted API
 
-The hosted API is at `https://wpay-api-six.vercel.app`:
+The hosted API is at `https://wpay-api-six.vercel.app`. The settlement metrics
+listed in [SETTLEMENT.md](SETTLEMENT.md#metrics) are only present once the
+hosted API is redeployed; the current hosted build predates them.
 
 ```bash
 curl -s https://wpay-api-six.vercel.app/v1/health | jq
@@ -245,6 +247,47 @@ generated keypairs through the SDK, not with Freighter, and no hosted checkout
 with real Freighter signing has been recorded. Treat real-extension E2E as
 **NOT RUN** until someone performs it and records the transaction hash, network,
 wallet address and result. Do not describe the isolated run as a Freighter test.
+
+### Opt-in real-extension suite
+
+`tests/freighter/checkout.spec.ts` drives the actual Freighter (Varial) MV3
+extension in Chromium against a running API and checkout app. It creates a
+fresh wallet inside a throwaway browser profile, funds it through Friendbot,
+switches it to Testnet, and then covers wrong-network refusal, signature
+rejection, an unconfirmed transaction hash, an expired invoice, and finally a
+real payment. The final test verifies the invoice is `PAID`, the payment is
+`SETTLED`, the fee split and merchant balance delta, the RPC `SUCCESS` result
+and ledger, and re-confirms that a duplicate payment is refused. The wallet's
+password and recovery phrase are generated in-browser and never exported,
+logged or committed; the evidence file contains only the public address,
+transaction hash, ledger and check results.
+
+Manual prerequisites:
+
+- the unpacked Freighter extension (`FREIGHTER_EXTENSION_PATH`);
+- a migrated database and a disposable invoice from
+  `node scripts/seed-freighter-e2e.mjs`;
+- an API with the isolated Testnet contract ids and the checkout app pointed at
+  that API.
+
+```bash
+FREIGHTER_EXTENSION_PATH=/path/to/freighter \
+WPAY_FREIGHTER_INVOICE=INV-FREIGHTER-… \
+WPAY_FREIGHTER_EXPIRED_INVOICE=INV-FREIGHTER-… \
+WPAY_FREIGHTER_API_URL=http://127.0.0.1:4100 \
+WPAY_FREIGHTER_APP_URL=http://127.0.0.1:3100 \
+DATABASE_URL=postgresql://… \
+WPAY_FREIGHTER_HEADLESS=false \
+  xvfb-run -a pnpm test:e2e:freighter
+```
+
+`.github/workflows/freighter-e2e.yml` performs the same setup on demand
+(`workflow_dispatch`): Postgres service, migrations, seeded invoices, official
+extension download, headed Chromium under Xvfb, evidence assertions and an
+artifact upload. It is not part of normal CI and needs no funded-wallet secret.
+The workflow and suite were **not executed** in this workspace (no display and
+no recorded run), so Issue #1 remains open until a real run produces the
+evidence file with a verified Testnet transaction.
 
 ## What is BLOCKED here
 

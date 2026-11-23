@@ -323,13 +323,15 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Automatic settlement on Testnet | local API maintenance in `execute` mode | window 4 `EXECUTED`, 4/4 Soroban txs `SUCCESS`, no duplicate on stable pass |
 | TypeScript typecheck | `pnpm typecheck` | 23/23 tasks pass |
 | TypeScript build | `pnpm build` | passes (api, indexer, 3 Next apps, mobile, extension) |
-| TypeScript tests | `pnpm test` with `DATABASE_URL` | 263 passed, 2 skipped (api 190, indexer 31, sdk 14, hooks 4, shared 10, e2e 10, database 4) |
+| TypeScript tests | `pnpm test` with `DATABASE_URL` | 278 passed, 2 skipped on 2026-11-23 (api 201, indexer 31, sdk 14, hooks 8, shared 10, e2e 10, database 4) |
 | API coverage | `pnpm --filter @wpay/api test:coverage` | 88.25% statements, 71.87% branches, 91.36% functions; the settlement executor is 90.42% statements |
 | Settlement automation (unit/integration) | Postgres integration suite, fake executor | claim once, refund aggregation, hold exclusion, success, retry backoff, non-retryable and cancellation paths, reconciliation totals and malformed-window detection |
+| Settlement metrics | `GET /v1/health/metrics` | 200 on 2026-11-23 with eligible, pending, age, run, retry-reason, duration, reconciliation and worker series; bounded labels, no addresses; unit + Postgres integration tests |
 | Settlement automation (Testnet) | supervised API maintenance | real claim, batch and four `SUCCESS` on-chain transactions; see `deployments/testnet-invoice-automation.json` |
 | Indexer replay/consistency | Postgres integration suite | replay from an earlier ledger inserted one event, skipped it on rerun, and reported the malformed event plus projection invariant |
 | Indexer Testnet catch-up | maintenance against scratch DB + Testnet | 19 events fetched/inserted, 12 projections applied, 0 failures; checkpoints advanced; 4 expected dead letters resolved; stable pass 0/0/0 |
-| Browser tests | `pnpm test:browser` | 9 passed: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
+| Browser tests | `pnpm test:browser` | 9 passed on 2026-11-23: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
+| Real Freighter checkout | `pnpm test:e2e:freighter` / `freighter-e2e.yml` | Harness implemented 2026-11-23 (extension, Friendbot wallet, rejection/wrong-network/expired checks, DB settlement assertions); **NOT RUN** in this workspace |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | rechecked 2026-11-22: both 200; Neon and Soroban up; 16/16 contract flags; previously verified CSRF cookie, unknown-account 401, sixth-failure 429, disallowed origin 403 |
 | Hosted settlement automation | `GET /v1/admin/settlements/automation` | BLOCKED: 404 on 2026-11-22; migration 0008 and the new API code are not deployed |

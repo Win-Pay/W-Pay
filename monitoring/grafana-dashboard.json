@@ -103,6 +103,128 @@
           }
         }
       }
+    },
+    {
+      "type": "stat",
+      "title": "Settlement eligible payments",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "wpay_settlement_eligible_payments",
+          "legendFormat": "eligible"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Oldest pending settlement (age)",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "wpay_settlement_oldest_pending_age_seconds"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3600
+              },
+              {
+                "color": "red",
+                "value": 7200
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Settlement reconciliation failures",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "wpay_settlement_reconciliation_failures{check=\"total\"}",
+          "legendFormat": "inconsistencies"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Settlement attempts by failure reason",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "wpay_settlement_retries_total",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Automation batches and execution duration",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "wpay_settlement_automation_runs_total",
+          "legendFormat": "{{outcome}}"
+        },
+        {
+          "expr": "wpay_settlement_execution_duration_seconds{quantile=\"0.95\"}",
+          "legendFormat": "p95 duration"
+        }
+      ]
     }
   ]
 }

@@ -385,3 +385,86 @@ These are judgement estimates for the remaining work, not measured pass rates.
 | Drips Wave automated review readiness | **80%** | Green CI/Security, 140 Rust tests, 263 TypeScript tests, 9 browser tests, coverage, dependency audit and documented evidence. Gaps: uncommitted pass not yet pushed, hosted code/migration stale, production backup blocked, one transitive Rust advisory |
 | Human review readiness | **65%** | Architecture, threat model, audit package, Testnet transaction evidence and honest limitations are documented. Gaps: no independent audit, no multisig/hardware ceremony, no real Freighter proof, no production backup, hosted deployment mismatch |
 | Production deployment readiness | **35%** | Only Testnet, single-key admin, unaudited contracts, stale hosted API/migration, no production backup/PITR, no real-wallet E2E, scheduler-based indexer/webhooks. The verified core payment/settlement flow is real, but the production prerequisites are not met |
+
+## 10. Update — 2026-11-23 metrics and Freighter-harness pass
+
+This pass added the remaining code-side work for Issues #1 and #3. Contract
+sources, contract ids, deployed WASM and migrations were not changed. Results
+were produced locally in this workspace with an isolated PostgreSQL 16
+container; nothing was deployed.
+
+### Implemented
+
+- **Settlement automation metrics (Issue #3).** `apps/api/src/metrics.ts` adds
+  `wpay_settlement_eligible_payments`, pending windows by bounded `status`,
+  oldest-pending age, run outcomes, retries grouped by six bounded reasons, last
+  success timestamp, an execution-duration summary, reconciliation checks, the
+  configured mode/worker state, and API-side indexer health. Existing payment,
+  invoice, refund, merchant and contract gauges are preserved; the indexer's own
+  metrics are untouched and the API-side names use the `wpay_api_` prefix.
+  Values come from Postgres at scrape time, so they survive serverless cold
+  starts. Wallet addresses, merchant names, memos, hashes and raw errors never
+  become labels or values.
+- **Real Freighter checkout harness (Issue #1).** `tests/freighter/checkout.spec.ts`
+  drives the real extension in Chromium, creates and Friendbot-funds a fresh
+  wallet, covers wrong-network refusal, signature rejection, an unconfirmed hash,
+  an expired invoice and a successful payment, then verifies the invoice is
+  `PAID`, the payment is `SETTLED`, the fee split, merchant balance delta, RPC
+  ledger and duplicate protection. `scripts/seed-freighter-e2e.mjs` seeds the
+  disposable invoices and `.github/workflows/freighter-e2e.yml` runs the whole
+  setup on `workflow_dispatch` with the official extension download and
+  sanitized evidence assertions. No wallet secret exists in CI.
+- **Dependency and wallet plumbing.** The checkout and dashboards now use the
+  official `@stellar/freighter-api` when no legacy injected provider exists;
+  `connectFreighter` opens access once and the checkout reuses that provider, so
+  real extension users are no longer treated as having no wallet. BigInt values
+  returned by `POST /v1/transactions/submit` are serialized for JSON.
+- **Monitoring and alerts.** `monitoring/alerts.yml` adds backlog, backoff and
+  reconciliation alerts; `monitoring/grafana-dashboard.json` adds backlog, age,
+  completion, retry-reason and p95-duration panels; SETTLEMENT and DEPLOYMENT
+  document the exact series and scrape path.
+- Removed two stray local artifacts (`tmp-probe.mjs`, `package-lock.json`) so the
+  pnpm-only repository has no ad-hoc probe script or competing lockfile.
+
+### Verified locally
+
+| Check | Result |
+| --- | --- |
+| `pnpm build` | 15/15 tasks |
+| `pnpm typecheck` | 23/23 tasks |
+| `pnpm lint` | 15/15 tasks, 0 errors, 0 warnings |
+| `pnpm test` (Postgres 16) | 278 passed, 2 skipped (api 201, indexer 31, sdk 14, hooks 8, shared 10, e2e 10, database 4) |
+| Metrics unit tests | 9 passed (`apps/api/src/metrics.test.ts`) |
+| Metrics integration | Postgres suite asserts exact series, success count >= 1, all bounded reasons and no addresses; the HTTP endpoint returns 200 with all series |
+| `pnpm test:browser` | 9 passed (checkout 5, merchant 2, admin 2); the first run hit a stale Next dev cache after a production build, and passed after clearing `.next` |
+| Workflow/config validation | Python YAML parse of the new and changed workflows/alerts, JSON parse of the dashboard, `bash -n` on every script |
+| Prisma | `prisma generate` and all eight migrations applied to an isolated PostgreSQL 16 |
+| Rust | **NOT RUN** in this workspace (`cargo` is not installed); contract sources are unchanged from the recorded 140-test/16-WASM run |
+
+### Status after this pass
+
+| Requirement | Status | Evidence / remaining gap |
+| --- | --- | --- |
+| Issue #1 — real Freighter E2E | **PARTIAL** | Full harness, seed script and manual workflow implemented; no real extension run was performed here, so no Testnet tx evidence exists yet |
+| Issue #2 — migration 0008 + hosted API | **BLOCKED** | Migration applied and validated locally; hosted Neon has no credentials in this workspace and the hosted API still returns 404 |
+| Issue #3 — settlement metrics | **PASS (local)** | Implemented, unit + integration tested, served at `/v1/health/metrics`, documented and alerted; hosted deployment is still stale |
+| Production backup and restore | **BLOCKED** | `production` has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`; local encrypted drill only |
+| Soroban contract security | **PARTIAL** | Unchanged, tested suite and audit hand-off package; no independent audit |
+| Automatic Testnet settlement | **PASS (Testnet, supervised)** | Recorded window 4 execution; not hosted |
+| Indexer reliability | **PARTIAL** | Catch-up, replay and dead letters verified; no resident worker or outage test |
+| Backend/API deployment | **PARTIAL** | Hosted health is green but predates this code; no redeploy performed |
+| Frontend/Vercel deployment | **PARTIAL** | Hosted apps verified previously; the new Freighter SDK path is built locally but not redeployed |
+| GitHub governance | **BLOCKED** | Branch protection/environment secrets still unavailable to the current token |
+| Contributor readiness | **PARTIAL** | Templates, backlog and genuine issues exist; the new workflow and metrics raise readiness |
+| Independent security audit | **BLOCKED** | Not commissioned; the internal review is not an audit |
+
+### Readiness estimates (updated)
+
+| Dimension | Estimate | Reasoning |
+| --- | --- | --- |
+| Drips Wave automated review readiness | **84%** | Build/typecheck/lint/tests/browser all green locally, new bounded metrics with tests, CI-gated checks, new manual workflow. Gaps: not yet pushed/CI-verified for this pass, hosted code stale, production backup blocked, one transitive Rust advisory |
+| Human review readiness | **67%** | Strong evidence, honest blockers and a complete Freighter harness; still no real-extension run, no independent audit, no multisig ceremony, no production backup |
+| Production deployment readiness | **36%** | Metrics and wallet plumbing reduce operational risk, but hosted migration/API, backups, audit, key custody and a real-wallet run remain outstanding |
+
+Contract deployment, Testnet transaction, and audit statements above are
+unchanged from sections 3 and 8; this pass produced no new on-chain evidence.

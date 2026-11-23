@@ -27,6 +27,7 @@ import { PrismaService } from "../prisma.service";
 import { SorobanService } from "../soroban.service";
 import { AuditService } from "../audit.service";
 import { probeRedis } from "../rate-limit.store";
+import { settlementMetrics } from "../metrics";
 import { APP_CONFIG, type AppConfig } from "../config";
 import {
   CurrentUser,
@@ -157,6 +158,7 @@ export class HealthController {
       this.prisma.refund.count(),
       this.prisma.merchant.count(),
     ]);
+    const settlement = await settlementMetrics(this.prisma, this.config);
     const lines = [
       "# HELP wpay_payments_total Payments recorded",
       "# TYPE wpay_payments_total gauge",
@@ -175,7 +177,7 @@ export class HealthController {
       `wpay_contracts_configured ${Object.keys(this.config.contracts).length}`,
     ];
     response.setHeader("content-type", "text/plain; version=0.0.4");
-    response.send(`${lines.join("\n")}\n`);
+    response.send(`${lines.join("\n")}\n${settlement}`);
   }
 }
 

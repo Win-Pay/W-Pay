@@ -218,6 +218,10 @@ on commit `89aa100` (2026-11-22).
 - Contract WASM hashes match the 16 deployed Testnet contracts (16/16).
 - Kubernetes manifests pass kubeconform; Helm lint/template pass; Prometheus and
   Alertmanager configurations validate.
+- Settlement automation metrics use bounded labels only (`status`, `outcome`,
+  `reason`, `check`, `mode`) and are tested to contain no Stellar account or
+  contract addresses. Values are derived from Postgres at scrape time so a cold
+  serverless instance cannot report stale in-memory counters.
 
 ## Independent Soroban audit package
 

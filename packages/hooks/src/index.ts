@@ -249,7 +249,7 @@ export interface FreighterLike {
   ) => Promise<{ signedMessage: string; signerAddress: string }>;
 }
 
-/** Returns the injected Freighter API, if the extension is installed. */
+/** Returns a legacy injected Freighter API, if a page or test provides one. */
 export function freighterApi(): FreighterLike | null {
   if (typeof window === "undefined") return null;
   const candidate = (window as unknown as Record<string, unknown>).freighterApi ??
@@ -257,17 +257,138 @@ export function freighterApi(): FreighterLike | null {
   return (candidate as FreighterLike) ?? null;
 }
 
-/** Asks Freighter for the active account address. */
-export async function freighterAddress(): Promise<string> {
-  const wallet = freighterApi();
-  if (!wallet) {
+/** The subset of `@stellar/freighter-api` used by this adapter. */
+export interface FreighterSdk {
+  isConnected: () => Promise<{ isConnected: boolean; error?: { message: string } }>;
+  requestAccess: () => Promise<{ address: string; error?: { message: string } }>;
+  getAddress: () => Promise<{ address: string; error?: { message: string } }>;
+  getNetwork: () => Promise<{
+    network: string;
+    networkPassphrase: string;
+    error?: { message: string };
+  }>;
+  signTransaction: (
+    xdr: string,
+    options?: { networkPassphrase?: string; address?: string },
+  ) => Promise<{ signedTxXdr: string; error?: { message: string } }>;
+  signMessage?: (
+    message: string,
+    options?: { address?: string },
+  ) => Promise<{
+    signedMessage: string | { toString: (encoding?: string) => string } | null;
+    signerAddress: string;
+    error?: { message: string };
+  }>;
+}
+
+function walletError(error: { message: string } | undefined, fallback: string): Error {
+  return new Error(error?.message || fallback);
+}
+
+function base64(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "toString" in value) {
+    const text = (value as { toString: (encoding?: string) => string }).toString("base64");
+    if (typeof text === "string" && text !== "[object Object]") return text;
+  }
+  return "";
+}
+
+/**
+ * Adapts the official Freighter SDK to the structural wallet interface used by
+ * the apps. Freighter 5+ no longer injects `window.freighterApi`; dapps must use
+ * the extension messaging API, which is what `@stellar/freighter-api` wraps.
+ */
+export function freighterSdkAdapter(sdk: FreighterSdk): FreighterLike {
+  return {
+    getAddress: async () => {
+      const result = await sdk.getAddress();
+      if (result.error) throw walletError(result.error, "wallet did not return an address");
+      return { address: result.address };
+    },
+    getNetwork: async () => {
+      const result = await sdk.getNetwork();
+      if (result.error) throw walletError(result.error, "wallet did not return a network");
+      return { network: result.network, networkPassphrase: result.networkPassphrase };
+    },
+    signTransaction: async (xdr, options) => {
+      const result = await sdk.signTransaction(xdr, options);
+      if (result.error) throw walletError(result.error, "transaction signing was rejected");
+      return { signedTxXdr: result.signedTxXdr };
+    },
+    ...(sdk.signMessage
+      ? {
+          signMessage: async (message: string, options?: { address?: string }) => {
+            const result = await sdk.signMessage!(message, options);
+            if (result.error) throw walletError(result.error, "message signing was rejected");
+            return {
+              signedMessage: base64(result.signedMessage),
+              signerAddress: result.signerAddress,
+            };
+          },
+        }
+      : {}),
+  };
+}
+
+async function loadFreighterSdk(): Promise<FreighterSdk> {
+  // The package ships as UMD; bundlers expose the exports either directly or
+  // under `default` depending on interop, so accept both shapes.
+  const loaded = (await import("@stellar/freighter-api")) as unknown as FreighterSdk & {
+    default?: FreighterSdk;
+  };
+  return loaded.default?.isConnected ? loaded.default : loaded;
+}
+
+/**
+ * Returns a wallet provider. Legacy injected APIs win so existing deployments
+ * and browser tests keep working; otherwise the official SDK is required and
+ * `requestAccess` is only called for an explicit connect action so passive
+ * network checks never open a popup.
+ */
+export async function freighterProvider(options: { requestAccess?: boolean } = {}): Promise<FreighterLike> {
+  const legacy = freighterApi();
+  if (legacy) return legacy;
+  const sdk = await loadFreighterSdk();
+  let status: { isConnected: boolean; error?: { message: string } };
+  try {
+    status = await sdk.isConnected();
+  } catch {
     throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
   }
+  if (status.error || !status.isConnected) {
+    throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
+  }
+  if (options.requestAccess) {
+    const access = await sdk.requestAccess();
+    if (access.error) throw walletError(access.error, "wallet access was rejected");
+    if (!access.address) throw new Error("wallet did not return an address");
+  }
+  return freighterSdkAdapter(sdk);
+}
+
+/** Reads the active account from either a legacy provider or the SDK. */
+async function readAddress(wallet: FreighterLike): Promise<string> {
   const value = wallet.getAddress
     ? await wallet.getAddress().then((result) => (typeof result === "string" ? result : result.address))
     : await wallet.getPublicKey?.();
   if (!value) throw new Error("wallet did not return an address");
   return value;
+}
+
+/**
+ * Connects a wallet for checkout or dashboard sign-in. With the real extension
+ * this opens Freighter's grant-access popup once; the returned provider keeps
+ * signing in the same session.
+ */
+export async function connectFreighter(): Promise<{ address: string; wallet: FreighterLike }> {
+  const wallet = await freighterProvider({ requestAccess: true });
+  return { address: await readAddress(wallet), wallet };
+}
+
+/** Asks Freighter for the active account address. */
+export async function freighterAddress(): Promise<string> {
+  return (await connectFreighter()).address;
 }
 
 /**
@@ -318,22 +439,19 @@ export async function signWithFreighter(
   networkPassphrase: string,
   address?: string,
 ): Promise<string> {
-  const wallet = freighterApi();
-  if (!wallet) {
-    throw new Error("No Stellar wallet detected. Install Freighter to sign transactions.");
-  }
+  const wallet = await freighterProvider();
   await assertFreighterNetwork(networkPassphrase, wallet);
   const signed = await wallet.signTransaction(xdr, { networkPassphrase, address });
   return signed.signedTxXdr;
 }
 
-/** Signs a plain-text challenge (SEP-53) with the injected wallet. */
+/** Signs a plain-text challenge (SEP-53) with the connected wallet. */
 export async function signMessageWithFreighter(
   message: string,
   address?: string,
 ): Promise<string> {
-  const wallet = freighterApi();
-  if (!wallet?.signMessage) {
+  const wallet = await freighterProvider();
+  if (!wallet.signMessage) {
     throw new Error("This wallet cannot sign messages. Use Freighter or sign in with email.");
   }
   const signed = await wallet.signMessage(message, { address });

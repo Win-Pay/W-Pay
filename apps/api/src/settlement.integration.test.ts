@@ -12,6 +12,7 @@ import { loadConfig } from "./config";
 import { PrismaService } from "./prisma.service";
 import { AuditService } from "./audit.service";
 import { SorobanService } from "./soroban.service";
+import { collectSettlementMetrics, formatSettlementMetrics } from "./metrics";
 import {
   SettlementAutomationService,
   type RunSummary,
@@ -440,6 +441,40 @@ describe.skipIf(!hasDatabase)("settlement automation against PostgreSQL", () => 
     expect(badReport.invariants.windowTotalMismatch).toHaveLength(1);
     expect(badReport.invariants.windowTotalMismatch[0]!.id).toBe(bad.id);
     expect(badReport.invariants.windowTotalMismatch[0]!.entryTotal).toBe("100");
+  });
+
+  it("exposes settlement metrics with bounded labels and no wallet addresses", async () => {
+    const config = loadConfig({
+      ...process.env,
+      DATABASE_URL: process.env.DATABASE_URL!,
+      JWT_SECRET: "dev-secret-that-is-at-least-32-characters-long",
+      STELLAR_NETWORK: "testnet",
+      SETTLEMENT_AUTOMATION: "execute",
+      SETTLEMENT_HOLD_HOURS: "24",
+      SOROBAN_SOURCE_SECRET: Keypair.random().secret(),
+    });
+    const text = formatSettlementMetrics(await collectSettlementMetrics(prisma, config));
+
+    expect(text).toContain('wpay_settlement_automation_enabled{mode="execute"} 1');
+    expect(text).toContain("wpay_settlement_worker_up 1");
+    expect(text).toContain("wpay_settlement_eligible_payments");
+    expect(text).toContain("wpay_settlement_oldest_pending_age_seconds");
+
+    const successes = Number(
+      /wpay_settlement_automation_runs_total\{outcome="success"\} (\d+)/.exec(text)?.[1],
+    );
+    expect(successes).toBeGreaterThanOrEqual(1);
+    const failures = Number(
+      /wpay_settlement_automation_runs_total\{outcome="failure"\} (\d+)/.exec(text)?.[1],
+    );
+    expect(Number.isFinite(failures)).toBe(true);
+    expect(text).toContain('wpay_settlement_retries_total{reason="');
+    expect(text).toContain("wpay_settlement_execution_duration_seconds_count");
+
+    // Labels are bounded enums; addresses must never leak into the exposition.
+    expect(text).not.toContain(merchantA.settlementAddress);
+    expect(text).not.toContain(merchantB.settlementAddress);
+    expect(text).not.toMatch(/\b[GC][A-Z2-7]{55}\b/);
   });
 
   it("does nothing when automation is disabled", async () => {
