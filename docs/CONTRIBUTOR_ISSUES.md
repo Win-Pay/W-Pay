@@ -71,8 +71,9 @@ mainnet path.
 backlog, retry-reason, run, duration, reconciliation and worker gauges at
 `GET /v1/health/metrics`; unit tests in `metrics.test.ts` and Postgres
 integration assertions cover it. Documentation and alerts are updated. The
-remote issue stays open until the hosted API is redeployed, because the
-deployed build still lacks the endpoint's new series.
+remote issue is closed against the merged code and green CI; the hosted API
+still needs the redeploy tracked in Issue #2 before the new series appear in
+production.
 
 **Background.** Health and `/metrics` show indexer state, but an operator cannot
 alert on a growing backlog of due payments, failed automatic batches, or a

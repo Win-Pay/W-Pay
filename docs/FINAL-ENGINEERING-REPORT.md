@@ -458,11 +458,23 @@ container; nothing was deployed.
 | Contributor readiness | **PARTIAL** | Templates, backlog and genuine issues exist; the new workflow and metrics raise readiness |
 | Independent security audit | **BLOCKED** | Not commissioned; the internal review is not an audit |
 
+### CI evidence
+
+- CI run [45150999953](https://github.com/Win-Pay/W-Pay/actions/runs/45150999953)
+  and Security run [45150999993](https://github.com/Win-Pay/W-Pay/actions/runs/45150999993)
+  succeeded on `945d696` (2026-11-23). Security includes Gitleaks, CodeQL,
+  the production dependency audit and Trivy.
+- The manual Freighter workflow is not triggered by pushes. After the
+  duplicate-`env` fix, no workflow-file failure is produced. A real extension
+  run still requires `workflow_dispatch` and has not been performed.
+- The pass was pushed as `9bd4e83` (feature commit) and `945d696` (workflow
+  fixes).
+
 ### Readiness estimates (updated)
 
 | Dimension | Estimate | Reasoning |
 | --- | --- | --- |
-| Drips Wave automated review readiness | **84%** | Build/typecheck/lint/tests/browser all green locally, new bounded metrics with tests, CI-gated checks, new manual workflow. Gaps: not yet pushed/CI-verified for this pass, hosted code stale, production backup blocked, one transitive Rust advisory |
+| Drips Wave automated review readiness | **84%** | CI and Security green on `945d696`, build/typecheck/lint/tests/browser green locally, bounded metrics with tests and a manual Freighter workflow. Gaps: real-extension run not performed, hosted code stale, production backup blocked, one transitive Rust advisory |
 | Human review readiness | **67%** | Strong evidence, honest blockers and a complete Freighter harness; still no real-extension run, no independent audit, no multisig ceremony, no production backup |
 | Production deployment readiness | **36%** | Metrics and wallet plumbing reduce operational risk, but hosted migration/API, backups, audit, key custody and a real-wallet run remain outstanding |
 
