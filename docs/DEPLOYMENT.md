@@ -111,7 +111,10 @@ that command succeeds and the deployed API reports the new routes.
 archive TOC when `pg_restore` is installed (otherwise warns), and writes a
 `.sha256` sidecar;
 `pnpm db:restore-drill <dump>` restores it into a scratch database and compares
-every public table plus applied migrations. The daily workflow in
+every public table plus applied migrations. Both scripts normalize the URL
+through `scripts/pg-url.mjs`, which removes Prisma-only parameters such as
+`schema=public` before invoking libpq while preserving TLS settings and
+percent-encoded credentials. The daily workflow in
 `.github/workflows/backup.yml` does both and fails closed on mismatch, and
 refuses to upload a plaintext production dump.
 
@@ -122,13 +125,16 @@ AES-256, also used by the verify job). Configure them with
 `gh secret set BACKUP_GPG_PASSPHRASE --env production`, restrict the environment
 to `main`, then run `gh workflow run backup.yml --ref main`. Do not run the
 workflow until both secrets exist; it fails at preflight and opens a
-deduplicated failure issue. As of 2026-11-22 the environment exists but has no
+deduplicated failure issue. As of 2026-11-23 the environment exists but has no
 protection rules, and the secret names are not readable with the current token.
-The last scheduled run (45008774752, commit `9f0fd10`) failed with
-`DATABASE_URL secret is not configured`; no production backup has been taken.
-The local encrypted drill passed on 2026-11-22 (checksum, all 21 public tables,
-eight migrations), but a local drill is not production evidence. Full steps and
-acceptance criteria are in
+Scheduled run `45158391099` (commit `66d3fac`) failed at preflight with both
+secret errors; its `restore-drill` job separately failed because
+`?schema=public` was passed to `pg_dump`. That URL bug is fixed and covered by
+`pnpm test:scripts`, and `verify-backup` now declares the `production`
+environment. No successful production run exists yet. The local encrypted drill
+passed on 2026-11-23 with the PostgreSQL 16 client (checksum and TOC verified,
+all 21 public tables, eight migrations, 1s restore), but a local drill is not
+production evidence. Full steps and acceptance criteria are in
 [docs/DISASTER_RECOVERY.md](DISASTER_RECOVERY.md#enabling-production-backups).
 
 For a manual encrypted off-site copy, export `BACKUP_GPG_RECIPIENT` (public key)

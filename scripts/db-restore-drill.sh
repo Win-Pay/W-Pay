@@ -15,9 +15,12 @@ CONTAINER="${WPAY_PG_CONTAINER:-w-pay-postgres-1}"
 DB_USER="${POSTGRES_USER:-wpay}"
 DB_NAME="${POSTGRES_DB:-wpay}"
 SCRATCH="wpay_restore_drill_$$"
+ADMIN_DB="postgres"
+SOURCE_DB="$DB_NAME"
+SCRATCH_DB="$SCRATCH"
 
 cleanup() {
-  run_psql postgres "DROP DATABASE IF EXISTS \"$SCRATCH\";" >/dev/null 2>&1 || true
+  run_psql "${ADMIN_DB:-postgres}" "DROP DATABASE IF EXISTS \"$SCRATCH\";" >/dev/null 2>&1 || true
   if [ -n "${TMP_DUMP:-}" ] && [ -f "$TMP_DUMP" ]; then rm -f "$TMP_DUMP"; fi
   if [ -n "${TMP_PLAIN:-}" ] && [ -f "$TMP_PLAIN" ]; then rm -f "$TMP_PLAIN"; fi
 }
@@ -28,7 +31,18 @@ if command -v psql >/dev/null 2>&1; then
     echo "error: DATABASE_URL is required when the PostgreSQL client is installed" >&2
     exit 1
   fi
-  # Connection details come from the standard PG* variables or the URL.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: node is required to normalize DATABASE_URL for PostgreSQL utilities" >&2
+    exit 1
+  fi
+  # libpq rejects Prisma's ?schema=public. Normalize once and reuse for the
+  # source, admin and scratch connections; never print the result.
+  SOURCE_DB="$(node "$ROOT/scripts/pg-url.mjs")" || {
+    echo "error: DATABASE_URL could not be normalized for PostgreSQL" >&2
+    exit 1
+  }
+  ADMIN_DB="$(node "$ROOT/scripts/pg-url.mjs" --database postgres)" || exit 1
+  SCRATCH_DB="$(node "$ROOT/scripts/pg-url.mjs" --database "$SCRATCH")" || exit 1
   # shellcheck disable=SC2317
   run_psql() {
     local database="$1" sql="$2"
@@ -37,7 +51,6 @@ if command -v psql >/dev/null 2>&1; then
   run_restore() {
     pg_restore --no-owner --no-privileges --exit-on-error --dbname="$1" "$2"
   }
-  TARGET_URL="$SCRATCH"
 else
   if [ -z "${POSTGRES_PASSWORD:-}" ]; then
     echo "error: install the PostgreSQL client or set POSTGRES_PASSWORD for the docker fallback" >&2
@@ -53,7 +66,6 @@ else
     docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$CONTAINER" \
       pg_restore -U "$DB_USER" -d "$1" --no-owner --no-privileges --exit-on-error < "$2"
   }
-  TARGET_URL="$SCRATCH"
 fi
 
 if [ -z "$DUMP" ]; then
@@ -61,7 +73,7 @@ if [ -z "$DUMP" ]; then
   DUMP="$TMP_DUMP"
   echo "== creating a fresh backup for the drill"
   if command -v pg_dump >/dev/null 2>&1; then
-    pg_dump --format=custom --no-owner --no-privileges --file="$DUMP" "$DATABASE_URL"
+    pg_dump --format=custom --no-owner --no-privileges --file="$DUMP" "$SOURCE_DB"
   else
     docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$CONTAINER" \
       pg_dump -U "$DB_USER" -d "$DB_NAME" --format=custom --no-owner --no-privileges > "$DUMP"
@@ -120,15 +132,15 @@ fi
 
 RESTORE_STARTED_AT="$(date +%s)"
 echo "== creating scratch database $SCRATCH"
-run_psql postgres "CREATE DATABASE \"$SCRATCH\";"
+run_psql "$ADMIN_DB" "CREATE DATABASE \"$SCRATCH\";"
 
 echo "== restoring $(basename "$DUMP")"
-run_restore "$TARGET_URL" "$DUMP"
+run_restore "$SCRATCH_DB" "$DUMP"
 RESTORE_SECONDS="$(( $(date +%s) - RESTORE_STARTED_AT ))"
 echo "== restore wall time: ${RESTORE_SECONDS}s (scratch database creation + pg_restore)"
 
 echo "== comparing row counts for every public table"
-TABLES="$(run_psql "$DB_NAME" "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")"
+TABLES="$(run_psql "$SOURCE_DB" "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")"
 if [ -z "$TABLES" ]; then
   echo "error: source database has no public tables" >&2
   exit 1
@@ -136,8 +148,8 @@ fi
 failed=0
 while IFS= read -r table; do
   [ -z "$table" ] && continue
-  source_count="$(run_psql "$DB_NAME" "SELECT count(*) FROM \"$table\";")"
-  restored_count="$(run_psql "$TARGET_URL" "SELECT count(*) FROM \"$table\";")"
+  source_count="$(run_psql "$SOURCE_DB" "SELECT count(*) FROM \"$table\";")"
+  restored_count="$(run_psql "$SCRATCH_DB" "SELECT count(*) FROM \"$table\";")"
   if [ "$source_count" != "$restored_count" ]; then
     echo "MISMATCH $table: source=$source_count restored=$restored_count" >&2
     failed=1
@@ -146,8 +158,8 @@ while IFS= read -r table; do
   fi
 done <<< "$TABLES"
 
-source_migrations="$(run_psql "$DB_NAME" "SELECT string_agg(migration_name, ',' ORDER BY migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL;")"
-restored_migrations="$(run_psql "$TARGET_URL" "SELECT string_agg(migration_name, ',' ORDER BY migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL;")"
+source_migrations="$(run_psql "$SOURCE_DB" "SELECT string_agg(migration_name, ',' ORDER BY migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL;")"
+restored_migrations="$(run_psql "$SCRATCH_DB" "SELECT string_agg(migration_name, ',' ORDER BY migration_name) FROM _prisma_migrations WHERE finished_at IS NOT NULL;")"
 if [ "$source_migrations" != "$restored_migrations" ]; then
   echo "MISMATCH _prisma_migrations: applied migration sets differ" >&2
   failed=1

@@ -9,15 +9,16 @@
 | Region loss | < 4 h | ≤ 5 min |
 | Compromised key | < 1 h to containment | — |
 
-These are targets, not production measurements. The logical restore drill has
-been executed locally through the Docker fallback (no local `pg_restore`), so it
-skipped archive TOC validation; on 2026-11-22 it restored every public table
-(21 tables plus `_prisma_migrations`), compared all row counts and the applied
-`_prisma_migrations` set, and matched all 8 migrations after AES-256 decryption.
-The workflow's verify job runs `pg_restore --list` and compares the restored
-migration set with the manifest captured at dump time, but the workflow itself
-has not run. This is not a measure of production RTO, and failover/PITR recovery
-has not been measured.
+These are targets, not production measurements. The logical restore drill was
+executed locally with the PostgreSQL 16 client on 2026-11-23: AES-256
+passphrase encryption, SHA-256 verification, `pg_restore --list` TOC validation,
+restore into a scratch database created from the sanitized connection URL, and
+comparison of all 21 public tables plus `_prisma_migrations`. All row counts and
+the eight applied migrations matched, and the restore (including scratch DB
+creation) took 1 second. The workflow's verify job performs the same checks on
+the production dump, but the workflow itself has not completed successfully.
+This is not a measure of production RTO, and failover/PITR recovery has not
+been measured.
 
 ## Backups
 
@@ -25,21 +26,27 @@ has not been measured.
   `pg_dump` of the production database, encrypt it with AES-256 before upload,
   write a SHA-256 sidecar, and record a full table-count manifest, the exact
   applied migration list and metadata as artifacts retained for 30 days.
-- **Current state (2026-11-22): production backup is BLOCKED.** The last
-  scheduled run (`45008774752`, commit `9f0fd10`) failed at preflight because
-  the `production` environment has no `DATABASE_URL`. The environment exists but
-  has no protection rules. The workflow now also requires
-  `BACKUP_GPG_PASSPHRASE` and refuses to create an unencrypted dump. Neither
-  secret is readable with the current token, so no production backup has been
-  taken. The hardened workflow (mandatory encryption, exact migration-set
-  comparison, failure alert) has not yet run on GitHub. The 2026-11-22 local
-  drill passed and is recorded above, but it is not production evidence.
+- **Current state (2026-11-23): production backup is BLOCKED.** The scheduled
+  run `45158391099` (commit `66d3fac`) failed for two independent reasons:
+  1. `backup` failed at preflight because `production` has neither
+     `DATABASE_URL` nor `BACKUP_GPG_PASSPHRASE`.
+  2. `restore-drill` failed with `pg_dump: error: invalid URI query parameter:
+     "schema"` because the CI URL ends in `?schema=public`.
+  The second defect is fixed: `scripts/lib/postgres-url.mjs` now strips
+  Prisma-only parameters before any PostgreSQL utility sees the URL, and
+  `pnpm test:scripts` covers it in CI and in the backup workflow. The workflow
+  also now declares `environment: production` on `verify-backup`, which is
+  required for that job to read the decryption passphrase. The environment
+  exists but has no protection rules, and neither secret is readable with the
+  current token. The fixed workflow has not yet succeeded, so no production
+  backup exists and Issue #4 stays open.
 - The workflow has four jobs:
   - **backup**: preflight, dump, encryption, row-count manifest, migration
     manifest, metadata, artifact upload.
-  - **verify-backup**: checksum, decrypt, `pg_restore --list`, restore into an
-    ephemeral Postgres, compare every table count and the exact applied
-    migration set, then fail on any mismatch.
+  - **verify-backup**: declares `environment: production` so it can read the
+    passphrase, then verifies checksum, decrypts, runs `pg_restore --list`,
+    restores into an ephemeral Postgres, compares every table count and the
+    exact applied migration set, and fails on any mismatch.
   - **restore-drill**: migrates and seeds a separate ephemeral Postgres, backs it
     up through `scripts/db-backup.sh` with a throwaway CI-only passphrase, then
     restores through `scripts/db-restore-drill.sh`. It has no dependency on the
@@ -48,8 +55,18 @@ has not been measured.
   - **notify-failure**: on any failed job, opens or comments on a single
     `Scheduled database backup failed` issue with the run link, job results and
     the required secret names. It never prints secret values.
-- Preflight fails closed when `DATABASE_URL`, `BACKUP_GPG_PASSPHRASE`, `pg_dump`,
-  `psql` or `gpg` is missing. A plaintext production dump is never uploaded.
+- Preflight fails closed when `DATABASE_URL`, `BACKUP_GPG_PASSPHRASE`, `node`,
+  `pg_dump`, `psql` or `gpg` is missing, or when the URL cannot be normalized.
+  A plaintext production dump is never uploaded.
+- `scripts/lib/postgres-url.mjs` is the single connection-URL normalizer used by
+  `db-backup.sh`, `db-restore-drill.sh` and the workflow manifest step. It
+  retains libpq parameters (`sslmode`, `channel_binding`, `connect_timeout`,
+  TLS certificate paths and similar), removes Prisma/pooler-only parameters
+  such as `schema`, `connection_limit`, `pool_timeout`, `pgbouncer` and
+  `statement_cache_size`, preserves percent-encoded credentials, and never
+  prints the URL or includes it in an error. Regression tests cover
+  `schema=public`, `sslmode=require`, encoded passwords, Neon-style URLs, TLS
+  file parameters and invalid inputs (`node --test scripts/lib/*.test.mjs`).
 - `scripts/db-backup.sh` always writes a `.sha256` sidecar and rejects an empty
   or unreadable custom-format archive before publishing it. `pg_restore --list`
   validates the archive TOC when the client is installed.
@@ -115,7 +132,8 @@ do this once:
    row counts and `OK migrations=<count> applied`.
 6. Only after that run succeeds may the production backup item be marked PASS.
    A local drill or a green `restore-drill` job alone does not prove that the
-   production database can be backed up or restored.
+   production database can be backed up or restored. Issue #4 tracks the
+   acceptance run.
 
 ## Rebuild the projection
 

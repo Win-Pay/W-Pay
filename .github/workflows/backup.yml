@@ -51,7 +51,13 @@ jobs:
           command -v pg_dump >/dev/null || { echo "::error::pg_dump is missing on the runner"; exit 1; }
           command -v psql >/dev/null || { echo "::error::psql is missing on the runner"; exit 1; }
           command -v gpg >/dev/null || { echo "::error::gpg is missing on the runner"; exit 1; }
+          command -v node >/dev/null || { echo "::error::node is missing on the runner"; exit 1; }
+          if ! node scripts/pg-url.mjs >/dev/null; then
+            echo "::error::DATABASE_URL could not be normalized for PostgreSQL (check the scheme, host and user)."
+            exit 1
+          fi
           echo "backup encryption: AES-256 symmetric (BACKUP_GPG_PASSPHRASE)"
+          echo "DATABASE_URL normalization: Prisma-only query parameters removed; libpq TLS/connection parameters preserved"
       - name: Create backup
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -62,14 +68,17 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
+          # Prisma's ?schema=public is not a libpq parameter. Normalize without
+          # printing the URL or its credentials.
+          PG_URL="$(node scripts/pg-url.mjs)"
           : > "$RUNNER_TEMP/manifest.txt"
-          tables="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")"
+          tables="$(psql "$PG_URL" -v ON_ERROR_STOP=1 -Atc "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")"
           for table in $tables; do
-            count="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM \"$table\";")"
+            count="$(psql "$PG_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM \"$table\";")"
             echo "$table=$count" >> "$RUNNER_TEMP/manifest.txt"
           done
           cat "$RUNNER_TEMP/manifest.txt"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -Atc \
             "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL ORDER BY migration_name;" \
             > "$RUNNER_TEMP/migrations.txt"
           if [ ! -s "$RUNNER_TEMP/migrations.txt" ]; then
@@ -80,8 +89,8 @@ jobs:
           {
             echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "pg_dump=$(pg_dump --version)"
-            echo "server=$(psql "$DATABASE_URL" -Atc 'SHOW server_version;')"
-            echo "database_size=$(psql "$DATABASE_URL" -Atc 'SELECT pg_size_pretty(pg_database_size(current_database()));')"
+            echo "server=$(psql "$PG_URL" -Atc 'SHOW server_version;')"
+            echo "database_size=$(psql "$PG_URL" -Atc 'SELECT pg_size_pretty(pg_database_size(current_database()));')"
             echo "migration_count=$(wc -l < "$RUNNER_TEMP/migrations.txt")"
             echo "sha256=$(cut -d' ' -f1 "$RUNNER_TEMP"/wpay.dump*.sha256)"
           } > "$RUNNER_TEMP/backup-metadata.txt"
@@ -102,6 +111,10 @@ jobs:
     needs: backup
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Environment secrets (including BACKUP_GPG_PASSPHRASE) are only exposed to
+    # jobs that declare the environment; without this the decrypt step always
+    # saw an empty passphrase.
+    environment: production
     services:
       postgres:
         image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
@@ -211,6 +224,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: PostgreSQL URL regression tests
+        run: pnpm test:scripts
       - name: Migrate and seed
         run: |
           pnpm db:generate

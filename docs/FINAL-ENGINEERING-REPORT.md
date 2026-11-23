@@ -451,7 +451,7 @@ container; nothing was deployed.
 | Issue #1 — real Freighter E2E | **PASS (Testnet, local)** | Real Varial 5.53.0 extension run on 2026-11-23: tx `c21ae165…0092`, ledger `5881013`, invoice `PAID`, payment `SETTLED`; evidence `deployments/freighter-e2e.json` |
 | Issue #2 — migration 0008 + hosted API | **BLOCKED** | Migration applied and validated locally; hosted Neon has no credentials in this workspace and the hosted API still returns 404 |
 | Issue #3 — settlement metrics | **PASS (local)** | Implemented, unit + integration tested, served at `/v1/health/metrics`, documented and alerted; hosted deployment is still stale |
-| Production backup and restore | **BLOCKED** | `production` has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`; local encrypted drill only |
+| Production backup and restore | **PARTIAL** | `production` still has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`, so no production dump exists. The URL bug and missing verify-job environment are fixed; local encrypted drill passes with checksum, TOC, 21 tables and 8 migrations |
 | Soroban contract security | **PARTIAL** | Unchanged, tested suite and audit hand-off package; no independent audit |
 | Automatic Testnet settlement | **PASS (Testnet, supervised)** | Recorded window 4 execution; not hosted |
 | Indexer reliability | **PARTIAL** | Catch-up, replay and dead letters verified; no resident worker or outage test |
@@ -506,3 +506,44 @@ so this is a manual local run, not a CI or hosted payment.
 Contract deployment and audit statements above are unchanged from sections 3
 and 8. This pass added one new on-chain evidence item: the real Varial checkout
 recorded in section 10.
+
+## 11. Update — 2026-11-23 backup URL fix and restore drill
+
+Issue #4 exposed two backup defects. `restore-drill` passed Prisma's
+`?schema=public` directly to `pg_dump`, which failed with `invalid URI query
+parameter: "schema"`; and `verify-backup` referenced
+`BACKUP_GPG_PASSPHRASE` without declaring the `production` environment, so it
+could never read that secret. Both are fixed.
+
+- `scripts/lib/postgres-url.mjs` keeps only libpq query parameters, preserves
+  percent-encoded credentials and TLS settings, and rejects malformed or
+  non-PostgreSQL URLs without echoing them. `scripts/pg-url.mjs` reads the URL
+  from the environment, not argv.
+- `db-backup.sh`, `db-restore-drill.sh` and the workflow manifest/metadata step
+  use the normalized URL. The restore drill now connects to the source, admin
+  and scratch databases through normalized URLs; the Docker fallback is
+  unchanged.
+- `verify-backup` declares `environment: production`.
+- CI and `restore-drill` run `pnpm test:scripts`; nine tests cover
+  `schema=public`, `sslmode`, TLS file parameters, Neon URLs, encoded passwords,
+  scratch database names and malformed inputs.
+
+### Local verification (2026-11-23)
+
+| Check | Result |
+| --- | --- |
+| `pnpm test:scripts` | 9/9 passed |
+| PostgreSQL 16.15 encrypted backup | custom-format dump, AES-256, SHA-256 sidecar |
+| Archive validation | `pg_restore --list` passed |
+| Restore | scratch DB created from sanitized URL; 21 public tables plus `_prisma_migrations` matched |
+| Migration set | 8 applied migrations matched |
+| Restore time | 1 second (scratch creation plus restore) |
+| Hosted run | **BLOCKED**: `production` secrets absent; Issue #4 remains open |
+
+### Readiness estimates (updated after backup fix)
+
+| Dimension | Estimate | Reasoning |
+| --- | --- | --- |
+| Drips Wave automated review readiness | **88%** | Green CI/Security, 278 TypeScript tests, 9 URL regression tests, 140 Rust tests, 9 browser tests and real Freighter evidence. Gaps: production backup and hosted deployment blocked; one transitive Rust advisory |
+| Human review readiness | **75%** | Architecture, threat model, audit hand-off, real-wallet and settlement evidence are documented, and the backup failure has a tested fix. Gaps: no independent audit, multisig ceremony, production backup or hosted deployment |
+| Production deployment readiness | **38%** | The backup path is now correct and locally proven, but production credentials, hosted migration/API, PITR, audit and key custody remain outstanding |

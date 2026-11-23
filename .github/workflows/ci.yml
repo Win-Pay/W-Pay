@@ -89,6 +89,8 @@ jobs:
         run: |
           pnpm --filter @wpay/database exec prisma validate
           for script in scripts/*.sh; do bash -n "$script"; done
+      - name: PostgreSQL URL regression tests
+        run: pnpm test:scripts
       - name: Prisma generate and migrate
         run: |
           pnpm db:generate

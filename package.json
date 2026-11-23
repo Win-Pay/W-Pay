@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:scripts": "node --test scripts/lib/*.test.mjs",
     "clean": "turbo run clean",
     "contracts:build": "bash scripts/build-contracts.sh",
     "contracts:test": "cargo test --manifest-path packages/contracts/Cargo.toml",

@@ -227,22 +227,20 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   an operator key with the contract `Operator` role and a funded pool.
 - The daily production backup workflow fails closed because the `production`
   environment has neither `DATABASE_URL` nor `BACKUP_GPG_PASSPHRASE` configured.
-  The last scheduled run (45008774752, commit `9f0fd10`) failed at preflight
-  with `DATABASE_URL secret is not configured`, so no automatic production
-  backup has run. The workflow now refuses to upload an unencrypted dump,
-  verifies the archive TOC, compares every row count and the exact applied
-  migration set, and opens one deduplicated failure issue. The scripted
-  backup/restore drill was re-run cleanly on 2026-11-22: GPG AES-256
-  passphrase encryption, checksum verification, all 21 public tables plus
-  `_prisma_migrations`, eight matched migrations, and a matching restore.
-  Archive TOC validation is configured in the drill when `pg_restore` is
-  installed and in the workflow verify job, but this local run used the Docker
-  fallback and did not validate the TOC. The independent `restore-drill` job
-  runs against an ephemeral migrated/seeded Postgres without production
-  secrets, but the updated workflow has not yet run on GitHub. A local drill is
-  not a production backup. Follow
+  Scheduled run `45158391099` (commit `66d3fac`) failed at preflight for those
+  missing secrets, so no automatic production backup exists. The independent
+  `restore-drill` job also exposed a real bug: Prisma's `?schema=public` was
+  passed to `pg_dump`, which rejects it. A shared normalizer now strips
+  Prisma-only parameters before `pg_dump`, `pg_restore`, `psql` or `createdb`
+  see the URL, while preserving TLS and connection parameters and URL-encoded
+  credentials; nine regression tests cover it. The local encrypted drill now
+  passes with the PostgreSQL 16 client: checksum and archive TOC verified, all
+  21 public tables plus `_prisma_migrations` restored into a scratch database,
+  eight migrations matched, 1s restore time (2026-11-23). A local drill is not
+  a production backup. Follow
   [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md#enabling-production-backups)
-  to set both environment secrets and run the acceptance check.
+  to set both environment secrets and run the acceptance check; Issue #4 stays
+  open until that succeeds.
 - No external security audit has occurred. The internal review in
   [docs/AUDIT.md](docs/AUDIT.md) is not an audit.
 
@@ -351,8 +349,9 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Dependency audit | `pnpm audit --prod --audit-level=high` | no known production vulnerabilities |
 | Rust audit | `cargo audit --file packages/contracts/Cargo.lock` | 1 transitive advisory (RUSTSEC-2026-0387, no compatible fix); triaged in `docs/AUDIT.md` |
 | Database schema | `prisma validate` + `generate` | valid |
-| Backup restore drill | `scripts/db-restore-drill.sh` | 2026-11-22: checksum verified, all 21 public tables plus `_prisma_migrations` matched, 8 applied migrations matched after AES-256 decryption. TOC validation was skipped because `pg_restore` is not installed locally; the workflow verify job runs `pg_restore --list` |
-| Production backup workflow | GitHub Actions `backup.yml` | BLOCKED: last scheduled run 45008774752 failed at preflight (`DATABASE_URL secret is not configured`); no production backup exists |
+| Backup restore drill | `scripts/db-restore-drill.sh` | 2026-11-23: checksum and `pg_restore --list` TOC verified, all 21 public tables plus `_prisma_migrations` matched, 8 applied migrations matched after AES-256 decryption, 1s restore |
+| PostgreSQL URL regression tests | `pnpm test:scripts` | 9/9 passed: `schema=public` removed; `sslmode`, TLS files, encoded credentials and Neon URLs preserved; malformed input rejected without echoing secrets |
+| Production backup workflow | GitHub Actions `backup.yml` | **BLOCKED**: run 45158391099 failed at preflight (both secrets absent) and the drill failed on `schema`; the URL and `verify-backup` environment bugs are fixed, but no successful production run exists |
 | Backup retention | `BACKUP_RETENTION_DAYS=0 scripts/db-backup.sh` | prune path removed only `wpay-*.dump*` artifacts older than the cutoff |
 | Testnet resources | `pnpm measure:testnet` | recorded fee 82,589 stroops; simulated create 2,419,372 CPU, 83,770 stroops min resource fee, 1,840-byte assembled envelope |
 

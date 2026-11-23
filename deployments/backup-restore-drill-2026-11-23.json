@@ -1,0 +1,65 @@
+{
+  "generatedAt": "2026-11-23T11:30:00Z",
+  "scope": "local isolated PostgreSQL 16; not production",
+  "issue": 4,
+  "failureFixed": "pg_dump: error: invalid URI query parameter: \"schema\"",
+  "sourceUrl": "postgresql://wpay@127.0.0.1:5433/wpay?schema=public",
+  "tooling": {
+    "postgresClient": "16.15",
+    "pgDump": "16.15",
+    "gpg": "AES256.CFB",
+    "encryption": "symmetric passphrase (drill-only value)",
+    "normalizer": "scripts/lib/postgres-url.mjs"
+  },
+  "backup": {
+    "format": "custom",
+    "encrypted": true,
+    "sha256": "f044fb1ee94ef984ed19b75cedeffa5418c1a1b7fdbbb9516f9361c4345c8338",
+    "archiveTocValidated": true
+  },
+  "restore": {
+    "scratchDatabase": "ephemeral, dropped after drill",
+    "publicTablesMatched": 21,
+    "prismaMigrationsTableMatched": true,
+    "appliedMigrations": 8,
+    "migrationSetMatched": true,
+    "restoreSeconds": 1
+  },
+  "checks": {
+    "urlRegressionTests": "9/9 passed",
+    "schemaParameterRemoved": true,
+    "sslmodePreserved": true,
+    "urlEncodedCredentialsPreserved": true,
+    "neonStyleUrlSupported": true,
+    "restoreDrill": "passed"
+  },
+  "tableRows": {
+    "ApiKey": 0,
+    "AuditLog": 0,
+    "Escrow": 0,
+    "IdempotencyKey": 0,
+    "IndexedEvent": 0,
+    "IndexerCheckpoint": 0,
+    "IndexerFailure": 0,
+    "Invoice": 0,
+    "Merchant": 1,
+    "Notification": 1,
+    "Payment": 0,
+    "RefreshToken": 0,
+    "Refund": 0,
+    "SettlementEntry": 0,
+    "SettlementWindow": 0,
+    "Subscription": 0,
+    "SubscriptionPlan": 0,
+    "User": 1,
+    "WalletNonce": 0,
+    "WebhookDelivery": 0,
+    "WebhookEndpoint": 0,
+    "_prisma_migrations": 8
+  },
+  "limitations": [
+    "Local drill only; no production DATABASE_URL or BACKUP_GPG_PASSPHRASE was available.",
+    "The production backup workflow has not completed successfully; Issue #4 remains open.",
+    "No production RTO/RPO measurement was made."
+  ]
+}

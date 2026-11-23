@@ -40,7 +40,16 @@ if command -v pg_dump >/dev/null 2>&1; then
     echo "error: DATABASE_URL is required when pg_dump is installed" >&2
     exit 1
   fi
-  pg_dump --format=custom --no-owner --no-privileges --file="$OUT" "$DATABASE_URL"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: node is required to normalize DATABASE_URL for pg_dump" >&2
+    exit 1
+  fi
+  # Prisma adds ?schema=public; libpq rejects it. Normalize without logging.
+  PG_URL="$(node "$ROOT/scripts/pg-url.mjs")" || {
+    echo "error: DATABASE_URL could not be normalized for PostgreSQL" >&2
+    exit 1
+  }
+  pg_dump --format=custom --no-owner --no-privileges --file="$OUT" "$PG_URL"
 else
   CONTAINER="${WPAY_PG_CONTAINER:-w-pay-postgres-1}"
   USER_NAME="${POSTGRES_USER:-wpay}"
