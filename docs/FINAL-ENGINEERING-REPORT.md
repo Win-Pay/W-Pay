@@ -131,9 +131,10 @@ Open and documented in [AUDIT.md](AUDIT.md):
   domain is preferred. The extension
   requests only the configured API origin at lookup time. Production Next builds
   send CSP and standard security headers.
-- Real Freighter extension interaction not covered by CI; the browser suite has
-  nine Playwright tests (checkout, merchant dashboard, admin dashboard) using a
-  mocked provider and mocked API.
+- Real Freighter extension interaction is not covered by CI. The browser suite
+  has nine Playwright tests (checkout, merchant dashboard, admin dashboard)
+  using a mocked provider and mocked API; a real Varial 5.53.0 checkout was run
+  manually on 2026-11-23 (tx `c21ae165…0092`), documented in section 10.
 - Container hardening not exercised beyond build and health smoke test.
 - `cargo audit` reports RUSTSEC-2026-0387 in transitive `crypto-bigint` 0.5.5
   (via `soroban-env-host` 29.0.1). The patched 0.7.x line is incompatible with
@@ -367,7 +368,7 @@ workspace (credentials, permissions, an external party or hardware).
 | --- | --- | --- |
 | Production backup | **BLOCKED** | Workflow is hardened (mandatory encryption, checksum, TOC verify, row/migration manifests, failure issue). Local AES-256 drill passed on 2026-11-22 (21 tables, 8 migrations). No production backup exists: `production` has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`; run 45008774752 failed at preflight |
 | Migration `0008_settlement_automation` | **PARTIAL** | Locally applied through Prisma on PostgreSQL 16; data preservation, FK, nullability, unique index and `migrate diff` clean; additive/Neon-compatible. Hosted Neon remains at 7 migrations; command documented; no credentials in this workspace |
-| Real Testnet invoice payment | **PARTIAL** | On-chain invoice `2` payment PASS (`22f24058…37dd`), events and exact fee split verified; negative cases rejected. The required real Freighter wallet flow is **NOT RUN** (generated keypairs only) |
+| Real Testnet invoice payment | **PASS (Testnet)** | On-chain invoice `2` payment (`22f24058…37dd`) with generated keypairs, plus a real Varial 5.53.0 checkout on 2026-11-23 (`c21ae165…0092`, ledger `5881013`, invoice `PAID`, payment `SETTLED`) |
 | Automatic Testnet settlement | **PASS (Testnet, supervised)** | Real API worker claimed payment, created/executed window `4`, four `SUCCESS` transactions, no duplicate on stable pass; dead letters resolved. Not deployed to the hosted API |
 | Indexer/backend reliability | **PARTIAL** | Durable checkpoints/cursors, live catch-up, replay, dead-letter review, duplicate protection and stable second pass verified. No multi-hour outage test, no resident worker, no RPC failover; hosted indexer is a periodic maintenance call |
 | Admin/contract security | **PARTIAL** | RBAC, roles, pause, treasury timelock, upgrade delay, audit logging, rate limits and replay protection implemented and tested. Multisig, hardware wallet, external timelock and independent audit are **not** configured/verified; UpgradeManager only self-upgrades |
@@ -379,6 +380,7 @@ workspace (credentials, permissions, an external party or hardware).
 ### Readiness percentages
 
 These are judgement estimates for the remaining work, not measured pass rates.
+Updated estimates after the real Freighter run are in section 10.
 
 | Dimension | Estimate | Reasoning |
 | --- | --- | --- |
@@ -437,6 +439,7 @@ container; nothing was deployed.
 | Metrics unit tests | 9 passed (`apps/api/src/metrics.test.ts`) |
 | Metrics integration | Postgres suite asserts exact series, success count >= 1, all bounded reasons and no addresses; the HTTP endpoint returns 200 with all series |
 | `pnpm test:browser` | 9 passed (checkout 5, merchant 2, admin 2); the first run hit a stale Next dev cache after a production build, and passed after clearing `.next` |
+| Real Freighter checkout | 5/5 passed in headed Chromium under Xvfb with Varial 5.53.0; payment tx `c21ae165…0092`, ledger `5881013`, invoice `PAID`, payment `SETTLED`, merchant balance exact |
 | Workflow/config validation | Python YAML parse of the new and changed workflows/alerts, JSON parse of the dashboard, `bash -n` on every script |
 | Prisma | `prisma generate` and all eight migrations applied to an isolated PostgreSQL 16 |
 | Rust | **NOT RUN** in this workspace (`cargo` is not installed); contract sources are unchanged from the recorded 140-test/16-WASM run |
@@ -445,7 +448,7 @@ container; nothing was deployed.
 
 | Requirement | Status | Evidence / remaining gap |
 | --- | --- | --- |
-| Issue #1 — real Freighter E2E | **PARTIAL** | Full harness, seed script and manual workflow implemented; no real extension run was performed here, so no Testnet tx evidence exists yet |
+| Issue #1 — real Freighter E2E | **PASS (Testnet, local)** | Real Varial 5.53.0 extension run on 2026-11-23: tx `c21ae165…0092`, ledger `5881013`, invoice `PAID`, payment `SETTLED`; evidence `deployments/freighter-e2e.json` |
 | Issue #2 — migration 0008 + hosted API | **BLOCKED** | Migration applied and validated locally; hosted Neon has no credentials in this workspace and the hosted API still returns 404 |
 | Issue #3 — settlement metrics | **PASS (local)** | Implemented, unit + integration tested, served at `/v1/health/metrics`, documented and alerted; hosted deployment is still stale |
 | Production backup and restore | **BLOCKED** | `production` has no `DATABASE_URL`/`BACKUP_GPG_PASSPHRASE`; local encrypted drill only |
@@ -458,6 +461,27 @@ container; nothing was deployed.
 | Contributor readiness | **PARTIAL** | Templates, backlog and genuine issues exist; the new workflow and metrics raise readiness |
 | Independent security audit | **BLOCKED** | Not commissioned; the internal review is not an audit |
 
+### Real Freighter checkout evidence (2026-11-23)
+
+The official Varial 5.53.0 extension was loaded into a throwaway Chromium
+profile. A fresh wallet was created in-extension, funded by Friendbot, switched
+to Testnet and used to pay `INV-FREIGHTER-20261123-37D04E` (`10,000,000`
+stroops). The API verified the PaymentRouter invocation and event; the invoice
+became `PAID` and the payment `SETTLED` in Postgres with the payer and ledger
+matching. Wrong-network, rejected-signature, bogus-hash, expired-invoice and
+duplicate-payment cases all behaved as required.
+
+| Field | Value |
+| --- | --- |
+| Wallet | `GAIVD3XLXD5ZK2E4YPO6I24DOFBUP6CGVAON77MYMTYGC67OKRZVKNPJ` |
+| Transaction | `c21ae1659d6f90ba363c8866bf34ad969a1f97b2bf40897f370ed46504740092` |
+| Ledger | `5881013` (`SUCCESS`) |
+| Fee / net | `250,000` / `9,750,000` stroops |
+| Evidence | `deployments/freighter-e2e.json` (no secret material) |
+
+The GitHub workflow could not be dispatched with the available token (`403`),
+so this is a manual local run, not a CI or hosted payment.
+
 ### CI evidence
 
 - CI run [45150999953](https://github.com/Win-Pay/W-Pay/actions/runs/45150999953)
@@ -465,8 +489,9 @@ container; nothing was deployed.
   succeeded on `945d696` (2026-11-23). Security includes Gitleaks, CodeQL,
   the production dependency audit and Trivy.
 - The manual Freighter workflow is not triggered by pushes. After the
-  duplicate-`env` fix, no workflow-file failure is produced. A real extension
-  run still requires `workflow_dispatch` and has not been performed.
+  duplicate-`env` fix, no workflow-file failure is produced. Dispatch with the
+  current token returns `403`, so the real extension run was performed locally
+  instead and is recorded above.
 - The pass was pushed as `9bd4e83` (feature commit) and `945d696` (workflow
   fixes).
 
@@ -474,9 +499,10 @@ container; nothing was deployed.
 
 | Dimension | Estimate | Reasoning |
 | --- | --- | --- |
-| Drips Wave automated review readiness | **84%** | CI and Security green on `945d696`, build/typecheck/lint/tests/browser green locally, bounded metrics with tests and a manual Freighter workflow. Gaps: real-extension run not performed, hosted code stale, production backup blocked, one transitive Rust advisory |
-| Human review readiness | **67%** | Strong evidence, honest blockers and a complete Freighter harness; still no real-extension run, no independent audit, no multisig ceremony, no production backup |
-| Production deployment readiness | **36%** | Metrics and wallet plumbing reduce operational risk, but hosted migration/API, backups, audit, key custody and a real-wallet run remain outstanding |
+| Drips Wave automated review readiness | **86%** | CI and Security green, build/typecheck/lint/tests/browser green locally, bounded metrics with tests, and a real Freighter checkout with on-chain evidence. Gaps: hosted code stale, production backup blocked, one transitive Rust advisory |
+| Human review readiness | **74%** | Real-extension proof, Testnet settlement evidence, architecture, threat model and audit hand-off are documented. Gaps: no independent audit, no multisig ceremony, no production backup, hosted deployment mismatch |
+| Production deployment readiness | **37%** | Real-wallet checkout and metrics reduce operational risk, but hosted migration/API, backups, audit, key custody and environment protection remain outstanding |
 
-Contract deployment, Testnet transaction, and audit statements above are
-unchanged from sections 3 and 8; this pass produced no new on-chain evidence.
+Contract deployment and audit statements above are unchanged from sections 3
+and 8. This pass added one new on-chain evidence item: the real Varial checkout
+recorded in section 10.

@@ -17,7 +17,7 @@ and the exact owner steps. It does not claim that protections are enabled.
 | `production` environment | Exists, unprotected | API reports `protection_rules: []`, `can_admins_bypass: true`, no deployment branch policy |
 | Production secrets | **BLOCKED** | Environment secret names return `403` with the current token; last backup run failed because `DATABASE_URL` is absent |
 | Contributor issues | PASS | Genuine scoped issues [#1](https://github.com/Win-Pay/W-Pay/issues/1), [#2](https://github.com/Win-Pay/W-Pay/issues/2), [#3](https://github.com/Win-Pay/W-Pay/issues/3) opened; no synthetic activity |
-| Freighter E2E workflow | Configured, manual only | `.github/workflows/freighter-e2e.yml` (`workflow_dispatch`); downloads the official extension, uses a runtime-generated Friendbot wallet, uploads sanitized evidence. Not executed yet |
+| Freighter E2E workflow | Configured, manual only | `.github/workflows/freighter-e2e.yml` (`workflow_dispatch`); downloads the official extension, uses a runtime-generated Friendbot wallet, uploads sanitized evidence. Dispatch returns `403` with the current token, so the suite was run locally on 2026-11-23 and passed 5/5 |
 
 The token used here has repository admin permissions in the API response but is
 not granted the branch-protection or environment-secret scopes. Do not treat the

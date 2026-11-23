@@ -115,12 +115,15 @@ on commit `89aa100` (2026-11-22).
 8. **Extension host permission — fixed.** The MV3 manifest no longer requests
    `https://*/*`; it uses `optional_host_permissions` and asks for the single
    configured API origin when the user performs a lookup.
-9. **Real browser wallet flow untested.** Nine Playwright tests cover checkout,
-   fee disclosure, receipt/Explorer link, failed submission, landing page,
-   merchant dashboard and admin dashboard with a mocked Freighter provider and
-   mocked API. The suite passed on 2026-11-22. The real extension, user
-   rejection and real Testnet signing are still not exercised by CI. The
-   2026-11-22 Testnet invoice run used generated keypairs through the SDK.
+9. **Real browser wallet flow manually verified, not in CI.** Nine Playwright
+   tests cover checkout, fee disclosure, receipt/Explorer link, failed
+   submission, landing page, merchant dashboard and admin dashboard with a
+   mocked Freighter provider and mocked API. The suite passed on 2026-11-23. On
+   the same day the real Varial 5.53.0 extension was driven through a full
+   Testnet checkout (tx `c21ae165…0092`, ledger `5881013`, invoice `PAID`,
+   payment `SETTLED`), including wrong-network, rejection, bogus-hash, expired
+   and duplicate cases. It is not a CI job, and the 2026-11-22 generated-keypair
+   invoice run remains a separate piece of evidence.
 10. **Settlement execution is budget-bounded.** A 50-entry
     `settlement.execute` exceeded the local Soroban test-host budget in
     `auth.rs`; the API caps batches at 20 entries. The 20-entry benchmark uses
@@ -343,8 +346,9 @@ mechanism. Do not describe this as a complete upgrade system.
   [TESTNET_VERIFICATION.md](TESTNET_VERIFICATION.md).
 - Indexer: live-event catch-up, checkpoints, four expected dead letters reviewed
   and resolved, and a stable pass with no duplicate payment or batch.
-- TypeScript: 263 passed, 2 skipped; nine Playwright tests with mocked wallet and
-  API. No real Freighter extension test.
+- TypeScript: 278 passed, 2 skipped; nine Playwright tests with mocked wallet
+  and API. A real Varial 5.53.0 extension checkout additionally passed five
+  tests on 2026-11-23 (`c21ae165…0092`, ledger `5881013`); it is not part of CI.
 - Migration `0008`: validated locally through Prisma on PostgreSQL 16, with
   data-preservation, FK, nullability, unique-index and drift checks; not applied
   to the hosted database.

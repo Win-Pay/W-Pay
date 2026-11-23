@@ -1,6 +1,6 @@
 # Testnet verification
 
-Last updated: 2026-11-22. This page records what has been checked on Stellar
+Last updated: 2026-11-23. This page records what has been checked on Stellar
 Testnet, the exact commands, and what remains unverified. Contract ids, WASM
 hashes and deployment transactions for the original 16-contract deployment are
 in [DEPLOYMENTS.md](../DEPLOYMENTS.md); the isolated five-contract run below has
@@ -19,7 +19,7 @@ external audit.
 | Manual settlement windows | PASS (Testnet) | Windows 1 and 2 executed; underfunded and duplicate executions rejected |
 | Automatic settlement | PASS (Testnet, supervised) | API maintenance claimed payment, created and executed window 4 on chain |
 | Indexer catch-up and dead letters | PASS (local API + scratch Postgres) | Checkpoints advanced, projection applied, dead letters reviewed, second pass idempotent |
-| Whole checkout with real Freighter | NOT RUN (harness ready) | Opt-in Playwright suite and `freighter-e2e.yml` workflow added 2026-11-23; not executed in this workspace |
+| Whole checkout with real Freighter | PASS (Testnet, local) | Varial 5.53.0 run 2026-11-23: tx `c21ae165…0092`, ledger `5881013`; invoice `PAID`, payment `SETTLED` |
 | Hosted API running this code | BLOCKED | `/v1/admin/settlements/automation` returns `404` on the hosted deployment |
 | Production backup workflow | BLOCKED | `production` environment has no `DATABASE_URL`; last scheduled run failed |
 | Independent audit | BLOCKED | No external audit has been performed |
@@ -217,8 +217,10 @@ curl -s https://wpay-api-six.vercel.app/v1/health | jq
 curl -s -o /dev/null -w '%{http_code}\n' https://wpay-api-six.vercel.app/v1/health/ready
 ```
 
-Checked again on 2026-11-22: both return `200`; `database` and `soroban` are
+Checked again on 2026-11-23: both return `200`; `database` and `soroban` are
 `up` and all 16 contract flags are `true`. The three frontends return `200`.
+`/v1/health/metrics` also returns `200` but contains no `wpay_settlement_*`
+series, confirming the hosted API predates the metrics code.
 
 The hosted deployment is **stale relative to this repository**:
 
@@ -242,11 +244,11 @@ UI contract: network guard, single submission, failure handling and no "paid"
 state without a network result. The suite passes on Playwright 1.65 with the
 cached Chromium build.
 
-It does **not** load the real extension. The Testnet run above signed with
-generated keypairs through the SDK, not with Freighter, and no hosted checkout
-with real Freighter signing has been recorded. Treat real-extension E2E as
-**NOT RUN** until someone performs it and records the transaction hash, network,
-wallet address and result. Do not describe the isolated run as a Freighter test.
+The suite also loads the **real** extension in a dedicated opt-in project. That
+project was executed on 2026-11-23 with Varial 5.53.0 and passed all five tests,
+including a real Testnet payment. The 2026-11-22 isolated run above still used
+generated keypairs and must not be relabelled; the evidence for the separate
+real-extension run is in the section below.
 
 ### Opt-in real-extension suite
 
@@ -285,15 +287,43 @@ WPAY_FREIGHTER_HEADLESS=false \
 (`workflow_dispatch`): Postgres service, migrations, seeded invoices, official
 extension download, headed Chromium under Xvfb, evidence assertions and an
 artifact upload. It is not part of normal CI and needs no funded-wallet secret.
-The workflow and suite were **not executed** in this workspace (no display and
-no recorded run), so Issue #1 remains open until a real run produces the
-evidence file with a verified Testnet transaction.
+The workflow itself could not be dispatched with the available repository token
+(`403 Resource not accessible by integration`), so the same suite was executed
+locally in headed Chromium under Xvfb.
+
+## Real Freighter checkout (2026-11-23)
+
+The opt-in suite ran against the local API and checkout app with the official
+unpacked Varial extension. The wallet was created inside the extension in a
+throwaway browser profile and funded through Friendbot; its password and
+recovery phrase were generated at runtime and never exported.
+
+| Field | Value |
+| --- | --- |
+| Extension | Varial Wallet (Freighter) 5.53.0, official unpacked build |
+| Wallet | `GAIVD3XLXD5ZK2E4YPO6I24DOFBUP6CGVAON77MYMTYGC67OKRZVKNPJ` |
+| Invoice | `INV-FREIGHTER-20261123-37D04E`; `10,000,000` stroops, fee `250,000`, net `9,750,000` |
+| Transaction | `c21ae1659d6f90ba363c8866bf34ad969a1f97b2bf40897f370ed46504740092` |
+| Ledger / RPC | `5881013` / `SUCCESS` |
+| Database result | invoice `PAID`, payment `SETTLED`, one payment row, payer and ledger matched |
+| Negative cases | Mainnet refusal, rejected signature, bogus hash, expired invoice, duplicate payment |
+| Evidence | [`deployments/freighter-e2e.json`](../deployments/freighter-e2e.json) |
+
+The merchant balance increased by exactly the net amount and the explorer link
+used the same hash. The evidence file contains only the public address, invoice,
+transaction, ledger and check booleans; a scan for `S…` secret keys and
+seed-phrase markers found nothing.
+
+This was a manual local run, not a hosted payment and not a GitHub Actions run.
+Issue #1 is closed against this evidence; the workflow stays available for a
+future CI execution without a funded-wallet secret.
 
 ## What is BLOCKED here
 
-- **Real Freighter end-to-end payment:** requires a browser with the extension
-  installed and a funded user wallet. Not performed. The automated Testnet
-  payment uses generated keypairs and must be labelled as such.
+- **Freighter workflow dispatch:** the available repository token lacks the
+  Actions write scope (`403`), so `.github/workflows/freighter-e2e.yml` cannot
+  be started from this workspace. The same real-extension suite was run locally
+  on 2026-11-23; the workflow remains unexecuted.
 - **Hosted settlement automation:** blocked on redeploying the API and applying
   migration `0008` to Neon. The hosted route is still `404`.
 - **Production backup:** the `production` GitHub environment has no

@@ -187,11 +187,11 @@ See [ROADMAP.md](ROADMAP.md), [docs/AUDIT.md](docs/AUDIT.md) and the
   and currently serves an unrelated Cloudflare/PHP site; use the
   `*.vercel.app` URLs until the records in
   [docs/VERCEL.md](docs/VERCEL.md) are applied.
-- No hosted end-to-end payment with a real Freighter extension has been
-  exercised yet. The hosted stack has been verified through health, CSRF,
-  CORS, DB-backed login rejection and browser-to-API calls. The isolated
-  Testnet invoice payment on 2026-11-22 was signed by generated keypairs through
-  the SDK, not by Freighter; do not describe it as a wallet-extension test.
+- A real Varial (Freighter) 5.53.0 checkout was exercised against Testnet on
+  2026-11-23 from a locally hosted checkout: tx `c21ae165…0092`, ledger
+  `5881013`, invoice `PAID`, payment `SETTLED`. The wallet was created inside a
+  throwaway browser profile and funded by Friendbot; no secret was exported.
+  This is not a hosted or CI run, and the GitHub workflow remains manual.
 - The historical Testnet payment (`db354f7f…e47d`) proves on-chain settlement and
   fee splitting. Its memo was `e2e-invoice`, so after invoice-number memo
   binding it no longer qualifies as an invoice-level confirmation replay.
@@ -331,7 +331,7 @@ Full instructions: [docs/INSTALL.md](docs/INSTALL.md).
 | Indexer replay/consistency | Postgres integration suite | replay from an earlier ledger inserted one event, skipped it on rerun, and reported the malformed event plus projection invariant |
 | Indexer Testnet catch-up | maintenance against scratch DB + Testnet | 19 events fetched/inserted, 12 projections applied, 0 failures; checkpoints advanced; 4 expected dead letters resolved; stable pass 0/0/0 |
 | Browser tests | `pnpm test:browser` | 9 passed on 2026-11-23: checkout 5, merchant dashboard 2, admin dashboard 2 (mocked Freighter + API) |
-| Real Freighter checkout | `pnpm test:e2e:freighter` / `freighter-e2e.yml` | Harness implemented 2026-11-23 (extension, Friendbot wallet, rejection/wrong-network/expired checks, DB settlement assertions); **NOT RUN** in this workspace |
+| Real Freighter checkout | `xvfb-run -a pnpm test:e2e:freighter` | **5/5 passed 2026-11-23** with Varial 5.53.0; payment tx `c21ae165…0092` ledger `5881013`, invoice `PAID`, payment `SETTLED`; not a CI/hosted run |
 | Live API smoke | built API against local Postgres/Redis | health OK, database/Soroban up, Swagger 200, CORS origin echoed, cookie/CSRF refresh rotation and reuse revocation, merchant ownership 403, unlisted origin 403 |
 | Hosted API | `curl https://wpay-api-six.vercel.app/v1/health` and `/v1/health/ready` | rechecked 2026-11-22: both 200; Neon and Soroban up; 16/16 contract flags; previously verified CSRF cookie, unknown-account 401, sixth-failure 429, disallowed origin 403 |
 | Hosted settlement automation | `GET /v1/admin/settlements/automation` | BLOCKED: 404 on 2026-11-22; migration 0008 and the new API code are not deployed |

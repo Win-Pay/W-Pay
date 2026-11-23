@@ -1,0 +1,65 @@
+{
+  "generatedAt": "2026-11-23T10:10:04.566Z",
+  "network": "testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "environment": {
+    "appUrl": "http://127.0.0.1:3100",
+    "apiUrl": "http://127.0.0.1:4100",
+    "rpcUrl": "https://soroban-testnet.stellar.org",
+    "horizonUrl": "https://horizon-testnet.stellar.org"
+  },
+  "extension": {
+    "name": "Freighter (Varial)",
+    "version": "5.53.0",
+    "source": "official unpacked extension",
+    "mode": "headed-chromium"
+  },
+  "wallet": {
+    "address": "GAIVD3XLXD5ZK2E4YPO6I24DOFBUP6CGVAON77MYMTYGC67OKRZVKNPJ",
+    "funding": "Friendbot Testnet",
+    "secretExposed": false
+  },
+  "invoice": {
+    "number": "INV-FREIGHTER-20261123-37D04E",
+    "merchantName": "Testnet Invoice Merchant",
+    "merchantAddress": "GCQVC6RHBCVSQ5BPFBIYFYRN5E6KSDF53ZUJ3KU5AOAWRK5ZRIW4H2MQ",
+    "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "amount": "10000000",
+    "fee": "250000",
+    "feeBps": 250,
+    "net": "9750000",
+    "memo": "INV-FREIGHTER-20261123-37D04E",
+    "statusBefore": "OPEN"
+  },
+  "transaction": {
+    "hash": "c21ae1659d6f90ba363c8866bf34ad969a1f97b2bf40897f370ed46504740092",
+    "ledger": 5881013,
+    "rpcStatus": "SUCCESS",
+    "explorerUrl": "https://stellar.expert/explorer/testnet/tx/c21ae1659d6f90ba363c8866bf34ad969a1f97b2bf40897f370ed46504740092",
+    "successful": true
+  },
+  "checks": {
+    "freshWalletCreated": true,
+    "testNetSelected": true,
+    "grantAccessPopupShowedTestNet": true,
+    "wrongNetworkRejected": true,
+    "userRejectionHandled": true,
+    "failedTransactionRejected": true,
+    "expiredInvoiceRejected": true,
+    "invoicePaid": true,
+    "paymentSettled": true,
+    "referenceVerified": true,
+    "amountAndFeeVerified": true,
+    "merchantBalanceCredited": true,
+    "duplicateProtected": true,
+    "rpcConfirmed": true
+  },
+  "database": {
+    "checked": true,
+    "invoiceStatus": "PAID",
+    "paymentStatus": "SETTLED",
+    "payerMatched": true,
+    "ledgerMatched": true,
+    "paymentRowsForInvoice": 1
+  }
+}
