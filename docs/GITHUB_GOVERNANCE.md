@@ -7,7 +7,7 @@ and the exact owner steps. It does not claim that protections are enabled.
 
 | Control | Status | Evidence |
 | --- | --- | --- |
-| CI on `main` | PASS | CI run 45165881464 and Security run 45165881452 succeeded on `5b3e704` (2026-11-23); earlier green runs on `66d3fac`, `945d696`, `89aa100` and `8fefda0` |
+| CI on `main` | PASS | CI run 45167056648 and Security run 45167056853 succeeded on `3b79e2f` (2026-11-23); earlier green runs on `5b3e704`, `66d3fac`, `945d696`, `89aa100` and `8fefda0` |
 | Dependency review | Configured | `.github/workflows/dependency-review.yml`; PR-only by design |
 | CodeQL, Trivy, Gitleaks, dependency audit | Configured | `.github/workflows/security.yml`; green in run 45074675203 |
 | Branch protection on `main` | **BLOCKED** | `GET /repos/Win-Pay/W-Pay/branches/main/protection` returns `403 Resource not accessible by integration` with the current token (rechecked 2026-11-23) |

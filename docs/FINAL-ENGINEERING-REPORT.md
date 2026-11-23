@@ -540,6 +540,7 @@ could never read that secret. Both are fixed.
 | Restore time | 1 second (scratch creation plus restore) |
 | Hosted run | **BLOCKED**: `production` secrets absent; Issue #4 remains open |
 | CI / Security on `5b3e704` | 45165881464 and 45165881452 succeeded |
+| CI / Security on `3b79e2f` | 45167056648 and 45167056853 succeeded |
 
 ### Readiness estimates (updated after backup fix)
 
