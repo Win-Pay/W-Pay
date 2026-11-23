@@ -133,6 +133,7 @@ jobs:
       - name: Download the official Freighter extension
         env:
           EXTENSION_URL: ${{ inputs.extension_url }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           url="$EXTENSION_URL"
@@ -156,8 +157,6 @@ jobs:
           dirname "$manifest" > /tmp/freighter-path
           echo "FREIGHTER_EXTENSION_PATH=$(cat /tmp/freighter-path)" >> "$GITHUB_ENV"
           jq -r '.version' "$manifest" | sed 's/^/Freighter extension version: /'
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Run the real-extension checkout
         env:
