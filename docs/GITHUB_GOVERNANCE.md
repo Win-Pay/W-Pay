@@ -7,15 +7,15 @@ and the exact owner steps. It does not claim that protections are enabled.
 
 | Control | Status | Evidence |
 | --- | --- | --- |
-| CI on `main` | PASS | CI run 45150999953 and Security run 45150999993 succeeded on `945d696` (2026-11-23); earlier green runs on `89aa100` and `8fefda0` |
+| CI on `main` | PASS | CI run 45165881464 and Security run 45165881452 succeeded on `5b3e704` (2026-11-23); earlier green runs on `66d3fac`, `945d696`, `89aa100` and `8fefda0` |
 | Dependency review | Configured | `.github/workflows/dependency-review.yml`; PR-only by design |
 | CodeQL, Trivy, Gitleaks, dependency audit | Configured | `.github/workflows/security.yml`; green in run 45074675203 |
-| Branch protection on `main` | **BLOCKED** | `GET /repos/Win-Pay/W-Pay/branches/main/protection` returns `403 Resource not accessible by integration` with the current token |
+| Branch protection on `main` | **BLOCKED** | `GET /repos/Win-Pay/W-Pay/branches/main/protection` returns `403 Resource not accessible by integration` with the current token (rechecked 2026-11-23) |
 | Force-push / deletion protection | **NOT VERIFIED** | Requires the same branch-protection API/UI access |
 | Required reviews / conversation resolution | **NOT VERIFIED** | Same |
 | Required signed commits | **NOT CONFIGURED/VERIFIED** | No signed-commit evidence in this workspace |
 | `production` environment | Exists, unprotected | API reports `protection_rules: []`, `can_admins_bypass: true`, no deployment branch policy |
-| Production secrets | **BLOCKED** | Environment secret names return `403` with the current token; last backup run failed because `DATABASE_URL` is absent |
+| Production secrets | **BLOCKED** | Environment secret names return `403` with the current token; backup run 45158391099 failed because both `DATABASE_URL` and `BACKUP_GPG_PASSPHRASE` are absent |
 | Contributor issues | PASS | Genuine scoped issues [#1](https://github.com/Win-Pay/W-Pay/issues/1), [#2](https://github.com/Win-Pay/W-Pay/issues/2), [#3](https://github.com/Win-Pay/W-Pay/issues/3) opened; no synthetic activity |
 | Freighter E2E workflow | Configured, manual only | `.github/workflows/freighter-e2e.yml` (`workflow_dispatch`); downloads the official extension, uses a runtime-generated Friendbot wallet, uploads sanitized evidence. Dispatch returns `403` with the current token, so the suite was run locally on 2026-11-23 and passed 5/5 |
 

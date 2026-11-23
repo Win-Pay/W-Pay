@@ -539,6 +539,7 @@ could never read that secret. Both are fixed.
 | Migration set | 8 applied migrations matched |
 | Restore time | 1 second (scratch creation plus restore) |
 | Hosted run | **BLOCKED**: `production` secrets absent; Issue #4 remains open |
+| CI / Security on `5b3e704` | 45165881464 and 45165881452 succeeded |
 
 ### Readiness estimates (updated after backup fix)
 
